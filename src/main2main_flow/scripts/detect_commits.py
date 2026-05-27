@@ -67,13 +67,13 @@ def get_repo_head(repo_path: Path) -> str:
     return result.stdout.strip()
 
 
-def detect(vllm_path: Path, ascend_path: Path) -> dict:
+def detect(vllm_path: Path, ascend_path: Path, target_commit: str | None = None) -> dict:
     """Run drift detection and write /tmp/main2main/detect.json.
 
     Returns the detect result dict.
     """
     conf = extract_from_conf_py(ascend_path)
-    target = get_repo_head(vllm_path)
+    target = target_commit if target_commit else get_repo_head(vllm_path)
 
     result = {
         "base_commit": conf["base_commit"],
@@ -98,9 +98,10 @@ def main() -> None:
     )
     parser.add_argument("--vllm-path", type=Path, required=True)
     parser.add_argument("--ascend-path", type=Path, required=True)
+    parser.add_argument("--target-commit", default=None, help="Target commit SHA (default: vllm HEAD)")
     args = parser.parse_args()
 
-    result = detect(args.vllm_path, args.ascend_path)
+    result = detect(args.vllm_path, args.ascend_path, target_commit=args.target_commit)
     print(json.dumps(result, indent=2))
 
 

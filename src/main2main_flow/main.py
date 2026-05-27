@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import argparse
 import os
 from pathlib import Path
 from typing import Literal
@@ -10,7 +11,7 @@ from crewai.flow import Flow, listen, start, router, or_, and_
 from main2main_flow.scripts.detect_commits import detect, get_repo_head
 from main2main_flow.scripts.plan_steps import run_plan
 from main2main_flow.scripts.push_to_github import push_and_create_pr
-from main2main_flow.utils import UpgradeCompleted, StepCompleted, UpgradeFailed, StepRetryNeeded
+from main2main_flow.utils import UpgradeCompleted, StepCompleted, UpgradeFailed, StepRetryNeeded, resolve_path, cleanup_temp_dirs
 from main2main_flow.crews.summary_crew.summary_crew import SummaryCrew
 
 
@@ -18,6 +19,7 @@ class Main2MainState(BaseModel):
     # 输入：两个仓库路径，从环境变量读取
     vllm_path: str = ""
     vllm_ascend_path: str = ""
+    target_commit: str = ""   # 可选：指定升级目标 commit，默认使用 vllm HEAD
 
     # Step 1 输出：后续 step 需要读取
     has_drift: bool = False        # vllm 上游是否有未同步的 commit
@@ -30,18 +32,32 @@ class Main2MainState(BaseModel):
 
 class Main2MainFlow(Flow[Main2MainState]):
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._temp_dirs: list = []
+
     @start()
     def initialize(self):
-        self.state.vllm_path = self.state.vllm_path or os.getenv("VLLM_PATH", "")
-        self.state.vllm_ascend_path = self.state.vllm_ascend_path or os.getenv("VLLM_ASCEND_PATH", "")
+        raw_vllm = (
+            self.state.vllm_path or os.getenv("VLLM_PATH")
+        )
+        raw_ascend = (
+            self.state.vllm_ascend_path or os.getenv("VLLM_ASCEND_PATH")
+        )
+        self.state.vllm_path = resolve_path(raw_vllm, "vllm", self._temp_dirs)
+        self.state.vllm_ascend_path = resolve_path(raw_ascend, "vllm-ascend", self._temp_dirs)
+        self.state.target_commit = (
+            self.state.target_commit or os.getenv("VLLM_TARGET_COMMIT", "")
+        )
 
     @listen(initialize)
     def analyze_commit_and_plan_step(self):
         vllm_path = Path(self.state.vllm_path)
         vllm_ascend_path = Path(self.state.vllm_ascend_path)
 
-        # 1. 检测漂移：ascend 固定的 base_commit vs vllm 最新 HEAD
-        result = detect(vllm_path, vllm_ascend_path)
+        # 1. 检测漂移：ascend 固定的 base_commit vs 目标 commit（默认 vllm HEAD）
+        result = detect(vllm_path, vllm_ascend_path,
+                        target_commit=self.state.target_commit or None)
         self.state.has_drift = result["has_drift"]
         print(f"[analyze] base={result['base_commit'][:8]}  "
               f"target={result['target_commit'][:8]}  "
@@ -125,7 +141,34 @@ class Main2MainFlow(Flow[Main2MainState]):
 
 
 def kickoff():
-    Main2MainFlow().kickoff()
+    parser = argparse.ArgumentParser(description="Run Main2Main Flow")
+    parser.add_argument(
+        "--vllm-path", default=None,
+        help="Local path or GitHub URL for the vllm repo",
+    )
+    parser.add_argument(
+        "--vllm-ascend-path", default=None,
+        help="Local path or GitHub URL for the vllm-ascend repo",
+    )
+    parser.add_argument(
+        "--target-commit", default=None,
+        help="Target vllm commit SHA to upgrade to (default: vllm HEAD)",
+    )
+    args = parser.parse_args()
+
+    inputs = {}
+    if args.vllm_path:
+        inputs["vllm_path"] = args.vllm_path
+    if args.vllm_ascend_path:
+        inputs["vllm_ascend_path"] = args.vllm_ascend_path
+    if args.target_commit:
+        inputs["target_commit"] = args.target_commit
+
+    flow = Main2MainFlow()
+    try:
+        flow.kickoff(inputs=inputs if inputs else None)
+    finally:
+        cleanup_temp_dirs(flow._temp_dirs)
 
 
 def plot():
