@@ -3,7 +3,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from crewai.flow import Flow, listen, start
+from crewai.flow import Flow, listen, start, router, or_
 
 from main2main_flow.crews.content_crew.content_crew import ContentCrew
 
@@ -18,37 +18,45 @@ class ContentState(BaseModel):
 class ContentFlow(Flow[ContentState]):
 
     @start()
-    def plan_content(self, crewai_trigger_payload: dict = None):
-        print("Planning content")
+    def initialize(self):
+        # 定义各种state、中间info信息，用于不同step之间的通信
+        self.end_to_adapt = False
+        self.max_step = 0
+        self.step=0
 
-        if crewai_trigger_payload:
-            self.state.topic = crewai_trigger_payload.get("topic", "AI Agents")
-            print(f"Using trigger payload: {crewai_trigger_payload}")
+    @listen(initialize)
+    def analyze_commit_and_plan_step(self):
+        print("analyze_commit_and_plan_step")
+        self.max_step = 10
+        return "Analysize"
+
+    @router(or_(analyze_commit_and_plan_step, "NEXT_STEP"))
+    def commit_adapt(self):
+        if self.end_to_adapt:
+            return "END"
         else:
-            self.state.topic = "AI Agents"
+            # Call Agent
+            print("commit_adapt")
+            return "ADAPT_OK"
 
-        print(f"Topic: {self.state.topic}")
+    @router("ADAPT_OK")
+    def run_e2e_test(self):
+        # run e2e test
+        print("run_e2e_test")
+        res = True
+        if res:
+            self.step+=1
+            return "PASS"
+        else:
+            return "PASS_FAIL"
 
-    @listen(plan_content)
-    def generate_content(self):
-        print(f"Generating content on: {self.state.topic}")
-        result = (
-            ContentCrew()
-            .crew()
-            .kickoff(inputs={"topic": self.state.topic})
-        )
+    @listen("PASS")
+    def pass_step(self):
+        return "NEXT_STEP"
 
-        print("Content generated")
-        self.state.final_post = result.raw
-
-    @listen(generate_content)
-    def save_content(self):
-        print("Saving content")
-        output_dir = Path("output")
-        output_dir.mkdir(exist_ok=True)
-        with open(output_dir / "post.md", "w") as f:
-            f.write(self.state.final_post)
-        print("Post saved to output/post.md")
+    @listen("PASS_FAIL")
+    def push(self):
+        return "NEXT_STEP"
 
 
 def kickoff():
