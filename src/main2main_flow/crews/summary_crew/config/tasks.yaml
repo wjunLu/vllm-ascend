@@ -1,0 +1,89 @@
+generate_summary_task:
+  description: >
+    Generate the final main2main run summary report from two input directories.
+
+    CI results directory : {ci_results_dir}
+    Steps directory      : {steps_dir}
+
+    Follow these steps in order:
+
+    1. List all files in {ci_results_dir}.
+       Read each CI log file (*.log) and any JSON result files (*-result.json or
+       *-summary.json) to determine the CI outcome (ci_result, run_suite_exit_code)
+       for each step. Number the steps from the filenames (1.log → step 1, etc.).
+
+    2. List all files in {steps_dir}.
+       Read each step summary file (summary_N.md) to understand what was done,
+       what vllm-ascend files were modified, and any version guards added.
+
+    3. Check for patch files (N.patch) in {steps_dir}.
+       If a patch file exists for a step, the step required code changes.
+       If a patch file is absent, the step completed with "commit reference only".
+
+    4. Determine the overall run status:
+       - "completed" if every planned step was verified and committed, and the
+         target vLLM commit was reached.
+       - "partial" if a valid partial-stop condition was triggered (not because
+         of session length, model cost, or remaining time).
+
+    5. Write the final summary using this exact Markdown template:
+
+    ---
+    ## Main2Main Summary
+
+    Status: completed | partial
+    Upstream range: <base_sha>..<target_sha>
+    Reached upstream commit: <reached_sha>
+    Steps: <completed>/<total>
+    CI suite: e2e-main2main
+
+    ### Result
+    <One short paragraph: whether the target commit was fully reached.
+    If partial, state the valid partial-stop condition.>
+
+    ### Completed Steps
+    | Step | Upstream range | vllm-ascend commit | CI result | Summary |
+    | --- | --- | --- | --- | --- |
+    | step-1 | <start>..<end> | <sha> | passed | <adaptation description or "commit reference only"> |
+
+    ### Changes Made
+    - Updated vLLM commit reference from <base_sha> to <reached_sha>.
+    - <Key vllm-ascend adaptation area or file group changed, if any.>
+    - <Version compatibility guards added, if any.>
+
+    ### CI Verification
+    - Passed: <steps or suites that passed>
+    - Treated as env flakes: <brief list, or "none">
+    - Last successful step: <step-id>
+
+    ### Partial Stop
+    (Include this section only when Status is "partial".)
+    - Stopped at: <step-id>, upstream range <start>..<end>
+    - Reason: <valid partial-stop condition and concise explanation>
+    - Unresolved failures: <short error summary from the CI result JSON>
+    - Saved patch: /tmp/main2main/steps/<step-id>/failed.patch
+    - Saved failure summary: /tmp/main2main/steps/<step-id>/failed-summary.json
+    - Repository state: rolled back to last verified vllm-ascend commit <sha>
+
+    ### Follow-up
+    (Include this section only when there is a concrete next action.)
+    - <Concrete next action>
+    ---
+
+    Writing rules:
+    - Prefer concise paragraphs and a small number of high-signal bullets.
+    - Do not include raw CI log content.
+    - Use "commit reference only" in Completed Steps when the step only updated
+      the vLLM commit hash and no code changes were made (no patch file present).
+    - Allowed CI result values in the table are "passed" and "env_flake_pass" only.
+    - For a partial stop, make the unresolved failure actionable: name the failing
+      test, exception type, and likely area if known.
+    - Do not add "Remaining Steps (Not Started)" — this is a terminal summary,
+      not a progress report.
+
+  expected_output: >
+    A complete Markdown final summary following the template exactly.
+    The summary must be ready for a human reviewer: no raw logs, no debug dumps,
+    all applicable sections present, inapplicable optional sections omitted.
+  agent: summary_reporter
+  output_file: output/final_summary.md

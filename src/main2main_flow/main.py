@@ -5,11 +5,13 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from crewai.flow import Flow, listen, start, router, or_
+from crewai.flow import Flow, listen, start, router, or_, and_
 
 from main2main_flow.scripts.detect_commits import detect, get_repo_head
 from main2main_flow.scripts.plan_steps import run_plan
+from main2main_flow.scripts.push_to_github import push_and_create_pr
 from main2main_flow.utils import UpgradeCompleted, StepCompleted, UpgradeFailed, StepRetryNeeded
+from main2main_flow.crews.summary_crew.summary_crew import SummaryCrew
 
 
 class Main2MainState(BaseModel):
@@ -96,16 +98,31 @@ class Main2MainFlow(Flow[Main2MainState]):
 
     @listen(or_(UpgradeCompleted, UpgradeFailed))
     def generate_final_post(self):
-        # 佳伟
-        # create final post from draft
-        return "FinalPost"
+        ci_results_dir = os.getenv("CI_RESULTS_DIR", "/tmp/main2main/ci_results")
+        steps_dir = os.getenv("STEPS_DIR", "/tmp/main2main/steps")
+        result = (
+            SummaryCrew()
+            .crew()
+            .kickoff(
+                inputs={
+                    "ci_results_dir": ci_results_dir,
+                    "steps_dir": steps_dir,
+                }
+            )
+        )
+        return result
 
-    @listen(generate_final_post)
+    @listen(and_(UpgradeCompleted, generate_final_post))
     def push_to_github(self):
-        # 佳伟
-        #if xxx:
-        # push final post to github
-        return "PushToGithub"
+        if os.getenv("PUSH_TO_GITHUB", "false").lower() != "true":
+            print("[push] PUSH_TO_GITHUB is not true, skipping.")
+            return "SKIP_PUSH"
+
+        return push_and_create_pr(
+            ascend_path=Path(self.state.vllm_ascend_path),
+            github_repo=os.getenv("GITHUB_REPO", ""),
+        )
+
 
 def kickoff():
     Main2MainFlow().kickoff()
