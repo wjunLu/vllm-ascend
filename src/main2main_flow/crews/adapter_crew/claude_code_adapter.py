@@ -1,10 +1,46 @@
 """Claude Code CLI adapter for the adapter crew.
 
-Configuration lives in config/:
-  agents.yaml      — system prompt for each subagent
-  orchestrator.md  — orchestrator workflow template
+架构说明
+--------
+这里使用的是 subagent 模式，不是 CrewAI 的 team/crew 模式。
 
-Spawns `claude -p --output-format stream-json --verbose` as a subprocess.
+  subagent 模式：
+    由一个 orchestrator（协调者）统一调度所有 agent。
+    每个 subagent 是独立调用，运行完毕后返回结果，彼此之间不直接通信。
+    orchestrator 持有全局上下文，负责在 agent 之间传递信息。
+
+  team/crew 模式（未使用）：
+    多个 agent 并行存在，可以直接互相发消息。
+
+协调者与子 agent 的交互逻辑
+----------------------------
+1. 本模块用 subprocess 启动 `claude -p <orchestrator_prompt>`，
+   这个 claude 进程就是协调者（orchestrator）。
+
+2. 协调者的 prompt 来自 config/orchestrator.md，里面描述了完整的工作流：
+   Phase 1 — 分析循环（最多 3 轮）：
+     a) 协调者通过 Agent tool 启动 patch_analyzer subagent，传入上游 patch。
+     b) 协调者通过 Agent tool 启动 analyzer_qa subagent，传入 patch_analyzer 的输出。
+     c) 若 analyzer_qa 返回 REJECTED，协调者把 QA 反馈逐字注入下一轮
+        patch_analyzer 的 prompt，重复直到 APPROVED 或达到 3 轮上限。
+
+   Phase 2 — 适配循环（最多 3 轮）：
+     a) 协调者通过 Agent tool 启动 code_adapter subagent，传入已审批的分析结果。
+     b) 协调者通过 Agent tool 启动 code_reviewer subagent，传入 code_adapter 的输出。
+     c) 若 reviewer 返回 "approved": false，协调者把 issues 列表注入下一轮
+        code_adapter 的 prompt，重复直到 approved 或达到 3 轮上限。
+
+3. 所有 subagent 的输出由协调者归档到 step_dir 下的 md 文件中。
+4. 流程结束后，由协调者综合全程信息写 step_summary，输出最终 JSON。
+
+5. Claude Code 以 stream-json 格式输出 JSONL 事件流，本模块解析并实时打印：
+   - assistant 事件：协调者的思考文本和工具调用（含 Agent tool 启动 subagent）
+   - user 事件：工具返回结果（含 subagent 执行完毕后的输出）
+   - result 事件：整个 claude 进程的最终输出
+
+Configuration lives in config/:
+  agents.yaml      — 每个 subagent 的 system prompt（角色 + 任务 + 输出格式）
+  orchestrator.md  — 协调者的工作流模板（Phase 1 / Phase 2 / Final Output）
 """
 from __future__ import annotations
 
