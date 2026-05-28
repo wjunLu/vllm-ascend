@@ -58,9 +58,9 @@ PHASE 2 — Code Adaptation + Review (up to 3 rounds):
 
 Return the code_reviewer's final JSON block verbatim:
 ```json
-{
+{{
   "modified_files": ["vllm_ascend/foo.py"],
   "is_noop": false,
   "step_summary": "..."
-}
+}}
 ```
