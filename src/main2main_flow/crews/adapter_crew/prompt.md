@@ -105,7 +105,11 @@ Archive all teammate outputs to {step_dir}/:
   adaptation_log.md — git diff of all changes made
   review.md         — code review verdict and issues found
 
-When the team finishes, shut down all teammates and output:
+When the team finishes:
+  1. Send shutdown_request to each teammate via SendMessage
+  2. Wait for all teammates to confirm shutdown
+  3. Call TeamDelete to destroy the team session
+  4. Output:
 
 ```json
 {{

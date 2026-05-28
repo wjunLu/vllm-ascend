@@ -24,6 +24,32 @@ def _build_prompt(inputs: dict[str, Any]) -> str:
     return template.format_map(ctx)
 
 
+# ── process lifecycle ─────────────────────────────────────────────────────────
+
+def _is_done(line: str) -> bool:
+    """Detect whether the stream-json line signals task completion."""
+    try:
+        ev = json.loads(line)
+    except json.JSONDecodeError:
+        return False
+    # claude emits a "result" event when the prompt is finished
+    if ev.get("type") == "result" and not ev.get("is_error"):
+        return True
+    return False
+
+
+def _terminate(proc: subprocess.Popen) -> None:
+    """Terminate the subprocess gracefully, force-kill if needed."""
+    if proc.poll() is not None:
+        return  # already exited
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
 # ── result model ──────────────────────────────────────────────────────────────
 
 class AdaptResult(BaseModel):
@@ -80,12 +106,14 @@ def run_claude_code_adapter(inputs: dict[str, Any]) -> AdaptResult:
             _print_event(line, state)
             if log_fh:
                 _log_event(line, state, log_fh)
+            if _is_done(line):
+                break
     finally:
         if log_fh:
             log_fh.close()
         if raw_fh:
             raw_fh.close()
-    proc.wait()
+        _terminate(proc)
 
     return _parse_result("".join(state.lines))
 
@@ -176,8 +204,11 @@ def _print_event(line: str, state: _EventState) -> None:
                 if text:
                     print(f"\n{'─'*60}\n[Team: {sender}] message:\n{text}\n{'─'*60}\n", flush=True)
 
-    elif t == "result" and ev.get("is_error"):
-        print(f"\n[error] {ev.get('result', '')}", flush=True)
+    elif t == "result":
+        if ev.get("is_error"):
+            print(f"\n[error] {ev.get('result', '')}", flush=True)
+        else:
+            print(f"\n[result] {ev.get('result', '')}", flush=True)
 
 
 # ── event logger ─────────────────────────────────────────────────────────────
