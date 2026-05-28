@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from crewai.flow import Flow, listen, start, router, or_, and_
 
-from main2main_flow.crews.adapter_crew.opencode_adapter import AdaptResult, run_opencode_adapter
+from main2main_flow.crews.adapter_crew.claude_code_adapter import AdaptResult, run_claude_code_adapter
 from main2main_flow.crews.summary_crew.summary_crew import SummaryCrew
 from main2main_flow.scripts.detect_commits import detect
 from main2main_flow.scripts.plan_steps import run_plan
@@ -166,7 +166,7 @@ class Main2MainFlow(Flow[Main2MainState]):
         for attempt in range(1, 4):
             mode = "fix" if error_logs else "adapt"
             print(f"[ai_analysis] {step_id}: opencode attempt {attempt}, mode={mode}")
-            adapt_result = run_opencode_adapter({
+            adapt_result = run_claude_code_adapter({
                 "step_id": step_id,
                 "step_dir": str(step_dir),
                 "patch_path": str(patch_path),
