@@ -114,41 +114,48 @@ class Main2MainFlow(Flow[Main2MainState]):
         vllm_path = self.state.vllm_path
         ascend_path = self.state.vllm_ascend_path
 
-        # 1. checkout vllm 到本轮目标 commit
-        subprocess.run(
-            ["git", "-C", vllm_path, "checkout", step["end_commit"]],
-            check=True,
-        )
-        print(f"[ai_analysis] {step_id}: vllm checked out to {step['end_commit'][:8]}")
-
-        # 2. 生成本轮 upstream patch
         patch_path = step_dir / "upstream.patch"
         changed_files_path = step_dir / "changed-files.txt"
-        with open(patch_path, "w") as f:
-            subprocess.run(
-                ["git", "-C", vllm_path, "diff",
-                 f"{step['start_commit']}..{step['end_commit']}"],
-                stdout=f, check=True,
-            )
-        with open(changed_files_path, "w") as f:
-            subprocess.run(
-                ["git", "-C", vllm_path, "diff", "--name-only",
-                 f"{step['start_commit']}..{step['end_commit']}"],
-                stdout=f, check=True,
-            )
 
-        # 3. 更新所有 tracked 文件里的 vllm commit 引用（retry 时跳过）
-        try:
-            ref_result = run_update(
-                ascend_path=Path(ascend_path),
-                old_commit=step["start_commit"],
-                new_commit=step["end_commit"],
+        # 如果 step 目录下已有 tests/ 说明 e2e 跑过了，直接进入 fix 模式
+        has_test_results = (step_dir / "tests").exists()
+
+        if not has_test_results:
+            # 1. checkout vllm 到本轮目标 commit
+            subprocess.run(
+                ["git", "-C", vllm_path, "checkout", step["end_commit"]],
+                check=True,
             )
-            print(f"[ai_analysis] {step_id}: updated commit ref in "
-                  f"{len(ref_result['files_updated'])} file(s): "
-                  f"{ref_result['files_updated']}")
-        except ValueError:
-            print(f"[ai_analysis] {step_id}: commit ref already updated, skipping")
+            print(f"[ai_analysis] {step_id}: vllm checked out to {step['end_commit'][:8]}")
+
+            # 2. 生成本轮 upstream patch
+            with open(patch_path, "w") as f:
+                subprocess.run(
+                    ["git", "-C", vllm_path, "diff",
+                     f"{step['start_commit']}..{step['end_commit']}"],
+                    stdout=f, check=True,
+                )
+            with open(changed_files_path, "w") as f:
+                subprocess.run(
+                    ["git", "-C", vllm_path, "diff", "--name-only",
+                     f"{step['start_commit']}..{step['end_commit']}"],
+                    stdout=f, check=True,
+                )
+
+            # 3. 更新所有 tracked 文件里的 vllm commit 引用
+            try:
+                ref_result = run_update(
+                    ascend_path=Path(ascend_path),
+                    old_commit=step["start_commit"],
+                    new_commit=step["end_commit"],
+                )
+                print(f"[ai_analysis] {step_id}: updated commit ref in "
+                      f"{len(ref_result['files_updated'])} file(s): "
+                      f"{ref_result['files_updated']}")
+            except ValueError:
+                print(f"[ai_analysis] {step_id}: commit ref already updated, skipping")
+        else:
+            print(f"[ai_analysis] {step_id}: tests/ exists, skipping to fix mode")
 
         # 4. AI 适配 + pre_ci 校验循环
         # error_logs 统一为日志文件路径列表，来源不区分（pre_ci 或 e2e CI）
