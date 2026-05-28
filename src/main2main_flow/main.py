@@ -33,11 +33,9 @@ class Main2MainState(BaseModel):
     vllm_ascend_path: str = ""
     target_commit: str = ""
     test_log_dir: str = ""
-
-    # Step 2.4: 测试验证
     
-    steps: list = []              # 规划好的 adaptation 步骤列表
-    release_tag: str = ""         # main_vllm_tag from conf.py，用于 vllm_version_is() 校验
+    steps: list = []
+    release_tag: str = ""
 
     current_step: int = 0
 
@@ -45,7 +43,6 @@ class Main2MainState(BaseModel):
     cur_ascend_commit: str = ""
     cur_patch_path: str = ""
 
-    # e2e CI 失败时由 run_e2e_test 写入，ai_analysis 读取后进入修复模式
     test_errors: list = []
     retry_count: int = 0
 
