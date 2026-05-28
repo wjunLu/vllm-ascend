@@ -31,7 +31,11 @@ class Main2MainState(BaseModel):
     vllm_path: str = ""
     vllm_ascend_path: str = ""
     target_commit: str = ""
-    test_log_dir: str = "/vllm-workspace/test-logs"
+    test_log_dir: str = "/vllm-workspace/logs"
+    
+    # Step 1 输出：后续 step 需要读取
+    has_drift: bool = False        # vllm 上游是否有未同步的 commit
+    steps: list = []              # 规划好的 adaptation 步骤列表
 
     # Step 2.4: 测试验证
 
@@ -209,10 +213,9 @@ class Main2MainFlow(Flow[Main2MainState]):
 
     @router(ai_analysis)
     def run_e2e_test(self) -> Literal["StepCompleted", "UpgradeCompleted", "UpgradeFailed", "StepRetryNeeded"]:
-        step = self.state.steps[self.state.current_step]
-        step_id = step["id"]
+        step_id = self.state.current_step
         round_n = self.state.retry_count + 1
-        print(f"run_e2e_test: {step_id} round={round_n}")
+        print(f"run_e2e_test: step-{step_id} round={round_n}")
 
         if os.getenv("SKIP_E2E_TEST", "false").lower() == "true":
             print(f"[run_e2e_test] SKIP_E2E_TEST=true, treating as passed")
@@ -229,11 +232,12 @@ class Main2MainFlow(Flow[Main2MainState]):
             ascend_commit=self.state.cur_ascend_commit,
             patch_path=self.state.cur_patch_path or None,
             step_id=step_id,
-            workspace=self.state.test_log_dir,
+            round_number=round_n,
+            log_dir=self.state.test_log_dir,
         )
 
         test_passed = result.get("can_commit", False)
-        summary_log = f"/tmp/main2main/steps/{step_id}/ci/round-{round_n}-summary.json"
+        summary_log = f"/tmp/main2main/steps/{step_id}/tests/round-{round_n}-summary.json"
         print(f"test_passed={test_passed}, ci_result={result.get('ci_result')}")
 
         if test_passed:

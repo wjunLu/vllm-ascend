@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run main2main CI with resource-aware parallel scheduling.
+"""Run main2main tests with resource-aware parallel scheduling.
 
 Given the total NPU cards available on the target machine, this script:
 1. Maps each suite to its card requirement
@@ -7,32 +7,45 @@ Given the total NPU cards available on the target machine, this script:
    run in parallel, rounds run sequentially
 3. Aggregates per-suite results into a single result JSON
 
-Execution targets (all are just "a machine with N cards"):
-  - Local / CI runner: run directly (no --remote)
-  - Remote by name:    --remote <name> looks up remote_config.json
-  - Remote by host:    --remote user@host --remote-workdir /path
+Execution targets:
+  - Local:       run directly (no --remote)
+  - Remote host: --remote user@host (container taken from env)
+  - Remote env:  --remote env (reads env vars below)
 
-Remote config file (default: <skill_dir>/remote_config.json):
-  {
-    "remotes": {
-      "": {
-        "host": "root@1.2.3.4",
-        "workdir": "/vllm-workspace/vllm-ascend",
-        "runner": "docker exec e2e"
-      }
-    }
-  }
+  Remote execution always runs inside a Docker container on the target machine.
+  The container must already exist — it is NOT auto-created.
+  ascend_path is used directly as the remote workdir (typically backed by a
+  shared filesystem).
+
+Remote environment variables:
+  MAIN2MAIN_REMOTE_HOST       SSH target for remote execution, e.g. root@1.2.3.4
+  MAIN2MAIN_REMOTE_CONTAINER  container name for "docker exec"
 
 Usage:
-  # Remote by name (reads remote_config.json)
-  python3 run_main2main_ci_v2.py \
-    --ascend-path <path> --step-id step-1 --total-cards 8 \
-    --remote lwj-e2e \
-    --suite e2e-singlecard-light --suite e2e-2card-light --suite e2e-4card-light \
-    --round 1
+  # Local execution (multi-card parallel)
+  python3 run_tests.py \\
+    --vllm-path /vllm-workspace/vllm \\
+    --vllm-commit abc1234 \\
+    --ascend-path /vllm-workspace/vllm-ascend \\
+    --ascend-commit def5678 \\
+    --patch /tmp/main2main/steps/step-0/fix.patch \\
+    --step-id 0 --total-cards 8 \\
+    --suite e2e-singlecard-light \\
+    --suite e2e-2card-light
+
+  # Remote execution with container
+  python3 run_tests.py \\
+    --vllm-path /vllm-workspace/vllm \\
+    --vllm-commit abc1234 \\
+    --ascend-path /vllm-workspace/vllm-ascend \\
+    --ascend-commit def5678 \\
+    --step-id 1 --total-cards 8 \\
+    --remote container-e2e \\
+    --suite e2e-singlecard-light \\
+    --suite e2e-2card-light
 
   # Dry-run: print schedule only, no execution
-  python3 run_main2main_ci_v2.py ... --dry-run
+  python3 run_tests.py ... --dry-run
 """
 from __future__ import annotations
 
@@ -42,6 +55,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -54,8 +68,8 @@ DEFAULT_SUITES = ["e2e-singlecard-light"]
 # Environment setup (was set_env.py)
 # ---------------------------------------------------------------------------
 
-DEFAULT_VLLM_REMOTE = "https://github.com/vllm-project/vllm.git"
-DEFAULT_ASCEND_REMOTE = "https://github.com/vllm-project/vllm-ascend.git"
+DEFAULT_VLLM_REPO = "https://github.com/vllm-project/vllm.git"
+DEFAULT_ASCEND_REPO = "https://github.com/vllm-project/vllm-ascend.git"
 
 
 def _git_run(cmd: list[str], cwd: Path, msg: str) -> None:
@@ -68,15 +82,20 @@ def _git_run(cmd: list[str], cwd: Path, msg: str) -> None:
     print("OK")
 
 
-def _ensure_repo(path: Path, remote: str) -> None:
-    """Clone the repo if the directory doesn't exist."""
+def _ensure_repo(path: Path, remote: str) -> bool:
+    """Clone the repo if the directory doesn't exist or is not a git repo.
+
+    Returns True if the repo was freshly cloned, False if it already existed.
+    """
     if path.exists():
         if not (path / ".git").exists():
-            print(f"Error: {path} exists but is not a git repository", file=sys.stderr)
-            sys.exit(1)
-        print(f"  {path} already exists, fetching ... ", end="", flush=True)
-        _git_run(["git", "fetch", "--tags"], path, "fetch")
-        return
+            print(f"  {path} exists but is not a git repo, removing ... ", end="", flush=True)
+            shutil.rmtree(path)
+            print("OK")
+        else:
+            print(f"  {path} already exists, fetching ... ", end="", flush=True)
+            _git_run(["git", "fetch", "--tags"], path, "fetch")
+            return False
 
     path.parent.mkdir(parents=True, exist_ok=True)
     print(f"  Cloning {remote} -> {path} ... ", end="", flush=True)
@@ -89,6 +108,7 @@ def _ensure_repo(path: Path, remote: str) -> None:
         print(result.stderr.strip(), file=sys.stderr)
         sys.exit(result.returncode)
     print("OK")
+    return True
 
 
 def _checkout(path: Path, commit: str) -> None:
@@ -109,27 +129,107 @@ def _apply_patch(path: Path, patch_path: Path) -> None:
         _git_run(["git", "apply", str(patch_path)], path, f"git apply {patch_path.name}")
 
 
+def _build_exec_cmd(
+    inner_cmd: str,
+    remote_host: str | None = None,
+    remote_container: str | None = None,
+) -> list[str]:
+    """Wrap *inner_cmd* for execution on the target (local / remote container)."""
+    if remote_host:
+        return ["ssh", "-o", "StrictHostKeyChecking=no", remote_host,
+                f"docker exec {remote_container} sh -c {shlex.quote(inner_cmd)}"]
+    else:
+        return ["sh", "-c", inner_cmd]
+
+
+def _pip_install(
+    repo_path: Path,
+    remote_host: str | None = None,
+    remote_container: str | None = None,
+    extra_env: dict[str, str] | None = None,
+    requirements: str | None = None,
+    verbose: bool = False,
+    skip_editable: bool = False,
+) -> None:
+    """Run pip install in *repo_path* on the target (local/remote/container)."""
+    merged_env = dict(_PIP_INSTALL_BASE_ENV)
+    if extra_env:
+        merged_env.update(extra_env)
+    env_prefix = " ".join(f"{k}={v}" for k, v in merged_env.items()) + " "
+
+    verbose_flag = "-v " if verbose else ""
+
+    cmds = []
+    if requirements:
+        cmds.append(f"pip install -r {shlex.quote(requirements)}")
+    if not skip_editable:
+        cmds.append(f"{env_prefix}pip install {verbose_flag}-e .")
+
+    for i, cmd in enumerate(cmds):
+        full_cmd = f"cd {shlex.quote(str(repo_path))} && {cmd}"
+        label = f"pip install ({repo_path.name}) [{i+1}/{len(cmds)}]"
+        print(f"  {label} ... ", end="", flush=True)
+        exec_cmd = _build_exec_cmd(full_cmd, remote_host, remote_container)
+        result = subprocess.run(exec_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print("FAILED")
+            print(result.stderr.strip(), file=sys.stderr)
+            sys.exit(result.returncode)
+        print("OK")
+
+
+def _setup_mirrors(
+    remote_host: str | None = None,
+    remote_container: str | None = None,
+) -> None:
+    """Configure git proxy and pip mirrors on the target."""
+    cmds = [
+        "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
+        "pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple",
+    ]
+    for cmd in cmds:
+        exec_cmd = _build_exec_cmd(cmd, remote_host, remote_container)
+        subprocess.run(exec_cmd, capture_output=True, text=True)
+
+
+_PIP_INSTALL_BASE_ENV = {
+    "PIP_EXTRA_INDEX_URL": "https://mirrors.huaweicloud.com/ascend/repos/pypi",
+}
+
+
 def setup_env(
     vllm_path: Path,
     vllm_commit: str,
     ascend_path: Path,
     ascend_commit: str,
     patch_path: Path | None = None,
-    vllm_remote: str = DEFAULT_VLLM_REMOTE,
-    ascend_remote: str = DEFAULT_ASCEND_REMOTE,
+    vllm_remote: str = DEFAULT_VLLM_REPO,
+    ascend_remote: str = DEFAULT_ASCEND_REPO,
+    remote_host: str | None = None,
+    remote_container: str | None = None,
 ) -> None:
-    """Prepare the environment: clone, checkout, apply patch."""
+    """Prepare the environment: clone, checkout, install, apply patch, install."""
+    _setup_mirrors(remote_host, remote_container)
+
     print("=== Setup vLLM ===")
     _ensure_repo(vllm_path, vllm_remote)
     _checkout(vllm_path, vllm_commit)
+    print("=== Install vLLM ===")
+    _pip_install(vllm_path, remote_host, remote_container,
+                 extra_env={"VLLM_TARGET_DEVICE": "empty"})
 
     print("=== Setup vllm-ascend ===")
-    _ensure_repo(ascend_path, ascend_remote)
+    ascend_fresh = _ensure_repo(ascend_path, ascend_remote)
     _checkout(ascend_path, ascend_commit)
 
     if patch_path:
         print("=== Apply patch ===")
         _apply_patch(ascend_path, patch_path)
+
+    print("=== Install vllm-ascend ===")
+    _pip_install(ascend_path, remote_host, remote_container,
+                 requirements="requirements-dev.txt", verbose=True,
+                 skip_editable=not ascend_fresh)
 
     print("\nSetup complete.")
     print(f"  vLLM:        {vllm_path} @ {vllm_commit[:8]}")
@@ -172,42 +272,29 @@ def _suite_cards(suite_name: str) -> int:
 # Remote config
 # ---------------------------------------------------------------------------
 
-def _load_remote_config(config_path: Path | None, skill_dir: Path) -> dict[str, dict]:
-    """Load remote config JSON. Returns the 'remotes' dict."""
-    if config_path is not None:
-        path = config_path
-    else:
-        path = skill_dir / "remote_config.json"
-    if not path.exists():
-        return {}
-    with path.open() as f:
-        data = json.load(f)
-    return data.get("remotes", {})
+def _resolve_remote(remote: str) -> tuple[str, str]:
+    """Resolve --remote to (host, container).
 
-
-def _resolve_remote(remote: str, remotes: dict[str, dict]) -> tuple[str, Path | None, str | None]:
-    """Resolve --remote to (host, workdir, runner).
-
-    If *remote* contains '@', treat as literal SSH target.
-    Otherwise look it up in *remotes* dict by name.
-    Returns (host, workdir, runner). runner is None for direct SSH.
+    If *remote* contains '@', treat as literal SSH target, container is still
+    taken from environment variable.
+    Otherwise read from environment variables:
+      MAIN2MAIN_REMOTE_HOST      (required)
+      MAIN2MAIN_REMOTE_CONTAINER (required)
     """
-    if "@" in remote:
-        return remote, None, None
-
-    if remote not in remotes:
-        print(f"Error: remote '{remote}' not found in config. "
-              f"Known remotes: {list(remotes.keys())}", file=sys.stderr)
-        sys.exit(1)
-
-    entry = remotes[remote]
-    host = entry.get("host")
-    workdir = entry.get("workdir")
-    runner = entry.get("runner")
+    host = remote if "@" in remote else os.getenv("MAIN2MAIN_REMOTE_HOST", "")
     if not host:
-        print(f"Error: remote '{remote}' missing 'host' field", file=sys.stderr)
+        print("Error: --remote used but MAIN2MAIN_REMOTE_HOST is not set",
+              file=sys.stderr)
         sys.exit(1)
-    return host, Path(workdir) if workdir else None, runner
+
+    container = os.getenv("MAIN2MAIN_REMOTE_CONTAINER", "")
+    if not container:
+        print("Error: --remote used but MAIN2MAIN_REMOTE_CONTAINER is not set",
+              file=sys.stderr)
+        sys.exit(1)
+
+    print(f"  Remote target: {host}  container: {container}")
+    return host, container
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +366,7 @@ def _run_summary(
     ci_log_summary: Path,
     log_path: Path,
     summary_path: Path,
-    step_id: str,
+    step_id: int,
     round_number: int,
 ) -> dict:
     if not ci_log_summary.exists():
@@ -366,13 +453,12 @@ def run_tests(
     ascend_path: str | Path,
     ascend_commit: str,
     patch_path: str | Path | None = None,
-    step_id: str = "step-1",
+    step_id: int = 0,
     suites: list[str] | None = None,
     total_cards: int = 1,
     remote: str | None = None,
-    remote_workdir: str | Path | None = None,
-    workspace: str | Path = "/tmp/main2main",
-    remote_workspace: str | Path | None = None,
+    log_dir: str | Path = "/vllm-workspace/logs",
+    remote_log_dir: str | Path | None = None,
     round_number: int = 1,
     dry_run: bool = False,
     sequential: bool = False,
@@ -381,10 +467,11 @@ def run_tests(
 ) -> dict:
     """Run end-to-end tests for a main2main step.
 
-    1. Calls setup_env() to checkout commits and apply patches
-    2. Schedules and executes CI suites
-    3. Writes result JSON to <workspace>/steps/<step_id>/ci/round-<round>-result.json
-    4. Returns the result dict (includes ``can_commit`` bool and ``ci_result`` str)
+    1. Resolves remote target and ensures container is running
+    2. Clones/checkouts repos, applies patch, pip-installs on target
+    3. Schedules and executes CI suites
+    4. Writes result JSON to <log_dir>/steps/<id>/tests/round-<round>-result.json
+    5. Returns the result dict (includes ``can_commit`` bool and ``ci_result`` str)
 
     Returns:
         dict with keys: step_id, round, suite, suites, ci_result, passed,
@@ -395,38 +482,29 @@ def run_tests(
     ascend_path = Path(ascend_path)
     if patch_path:
         patch_path = Path(patch_path)
-    workspace = Path(workspace)
-    if remote_workdir:
-        remote_workdir = Path(remote_workdir)
-    if remote_workspace is None:
-        remote_workspace = workspace
+    log_dir = Path(log_dir)
+    if remote_log_dir is None:
+        remote_log_dir = log_dir
     else:
-        remote_workspace = Path(remote_workspace)
+        remote_log_dir = Path(remote_log_dir)
 
-    # ---- Step 1: Setup environment ----
+    # ---- Step 1: Resolve remote ----
+    remote_host: str | None = None
+    remote_container: str | None = None
+
+    if remote:
+        remote_host, remote_container = _resolve_remote(remote)
+
+    # ---- Step 2: Setup environment (git + pip install) ----
     setup_env(
         vllm_path=vllm_path,
         vllm_commit=vllm_commit,
         ascend_path=ascend_path,
         ascend_commit=ascend_commit,
         patch_path=patch_path,
+        remote_host=remote_host,
+        remote_container=remote_container,
     )
-
-    # ---- Step 2: Resolve remote ----
-    skill_dir = Path(__file__).resolve().parent.parent
-    remote_host: str | None = None
-    remote_wd: Path | None = None
-    remote_runner: str | None = None
-
-    if remote:
-        remotes = _load_remote_config(None, skill_dir)
-        remote_host, remote_wd, remote_runner = _resolve_remote(remote, remotes)
-        if remote_wd is None and remote_workdir is None:
-            print("Error: --remote-workdir is required when --remote is a literal SSH target",
-                  file=sys.stderr)
-            sys.exit(1)
-        if remote_workdir is not None:
-            remote_wd = remote_workdir
 
     # ---- Step 3: Verify run_suite.py exists ----
     run_suite = ascend_path / ".github" / "workflows" / "scripts" / "run_suite.py"
@@ -442,7 +520,7 @@ def run_tests(
     env.setdefault("VLLM_USE_MODELSCOPE", "true")
 
     # ---- Step 5: Determine output dirs ----
-    ci_dir = workspace / "steps" / step_id / "ci"
+    ci_dir = log_dir / "steps" / str(step_id) / "tests"
     result_path = ci_dir / f"round-{round_number}-result.json"
 
     suite_names = suites or DEFAULT_SUITES
@@ -491,16 +569,14 @@ def run_tests(
                 if mock:
                     duration = int(_MOCK_DURATIONS.get(suite_name, 60) * mock_scale)
                     if remote_host:
-                        inner_cmd = f"sleep {duration}"
-                        if remote_runner:
-                            inner_cmd = f"{remote_runner} {inner_cmd}"
-                        command = ["ssh", remote_host, inner_cmd]
+                        inner_cmd = f"docker exec {remote_container} sleep {duration}"
+                        command = ["ssh", "-o", "StrictHostKeyChecking=no", remote_host, inner_cmd]
                     else:
                         command = ["sleep", str(duration)]
                     print(f"  [{suite_name}] mock: sleep {duration}s (scale={mock_scale})", flush=True)
                 elif remote_host:
                     remote_run_suite = (
-                        remote_wd / ".github" / "workflows" / "scripts" / "run_suite.py"
+                        ascend_path / ".github" / "workflows" / "scripts" / "run_suite.py"
                     )
                     remote_env = [
                         f"ASCEND_RT_VISIBLE_DEVICES={devices}",
@@ -509,13 +585,12 @@ def run_tests(
                         if k.startswith("VLLM_"):
                             remote_env.append(f"{k}={shlex.quote(env[k])}")
                     inner_cmd = (
+                        f"docker exec {remote_container} "
                         f"env {' '.join(remote_env)} "
                         f"python3 {shlex.quote(str(remote_run_suite))} "
                         f"--suite {shlex.quote(suite_name)} --continue-on-error"
                     )
-                    if remote_runner:
-                        inner_cmd = f"{remote_runner} {inner_cmd}"
-                    command = ["ssh", remote_host, inner_cmd]
+                    command = ["ssh", "-o", "StrictHostKeyChecking=no", remote_host, inner_cmd]
                 else:
                     command = [
                         sys.executable, str(run_suite),
@@ -590,9 +665,9 @@ def run_tests(
         })
         print(f"  Round {round_idx} elapsed: {round_elapsed:.1f}s", flush=True)
 
-        # Pull remote logs back to local workspace
+        # Pull remote logs back to local log_dir
         if remote_host:
-            remote_ci_dir = f"{remote_workspace}/steps/{step_id}/ci/"
+            remote_ci_dir = f"{remote_log_dir}/steps/{step_id}/tests/"
             print(f"  Pulling remote logs: {remote_host}:{remote_ci_dir} -> {ci_dir}", flush=True)
             scp_result = subprocess.run(
                 ["scp", "-r", "-o", "StrictHostKeyChecking=no",
@@ -672,29 +747,24 @@ def main() -> None:
     parser.add_argument("--patch", type=Path,
                         help="Patch file to apply to vllm-ascend after checkout")
     # --- CI args ---
-    parser.add_argument("--step-id", required=True,
+    parser.add_argument("--step-id", type=int, required=True,
                         help="Step identifier, for example step-1")
     parser.add_argument("--round", type=int, default=1,
                         help="CI round number for this step")
     parser.add_argument("--suite", action="append",
                         help="run_suite.py suite name. Can be specified multiple times. "
                              "Defaults to e2e-singlecard-light.")
-    parser.add_argument("--workspace", type=Path, default=Path("/tmp/main2main"),
-                        help="main2main workspace directory")
+    parser.add_argument("--log-dir", type=Path, default=Path("/vllm-workspace/logs"),
+                        help="Directory for test logs")
     parser.add_argument("--total-cards", type=int, default=1,
                         help="Total NPU cards available on the target machine "
                              "(default: 1)")
     parser.add_argument("--sequential", action="store_true",
                         help="Force serial execution (one suite at a time)")
     parser.add_argument("--remote",
-                        help="Remote target: either a name from remote_config.json "
-                             "or a literal SSH target like user@host")
-    parser.add_argument("--remote-workdir", type=Path,
-                        help="Path to vllm-ascend on the remote machine "
-                             "(only needed when --remote is a literal SSH target)")
-    parser.add_argument("--remote-config", type=Path,
-                        help="Path to remote config JSON (default: "
-                             "<skill_dir>/remote_config.json)")
+                        help="Enable remote execution. Use 'user@host' for direct SSH, "
+                             "or any value to read from env vars "
+                             "(MAIN2MAIN_REMOTE_HOST / _CONTAINER / _IMAGE).")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print schedule only, do not execute")
     parser.add_argument("--mock", action="store_true",
@@ -713,8 +783,7 @@ def main() -> None:
         suites=args.suite,
         total_cards=args.total_cards,
         remote=args.remote,
-        remote_workdir=args.remote_workdir,
-        workspace=args.workspace,
+        log_dir=args.log_dir,
         round_number=args.round,
         dry_run=args.dry_run,
         sequential=args.sequential,
