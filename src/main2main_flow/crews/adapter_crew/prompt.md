@@ -114,3 +114,5 @@ When the team finishes, shut down all teammates and output:
   "step_summary": "comprehensive summary: what was analyzed, what changed, issues found and resolved"
 }}
 ```
+
+After outputting this JSON, the task is fully complete. Stop — no further actions.
