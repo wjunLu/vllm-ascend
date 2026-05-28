@@ -168,6 +168,7 @@ class Main2MainFlow(Flow[Main2MainState]):
             print(f"[ai_analysis] {step_id}: opencode attempt {attempt}, mode={mode}")
             adapt_result = run_opencode_adapter({
                 "step_id": step_id,
+                "step_dir": str(step_dir),
                 "patch_path": str(patch_path),
                 "changed_files_path": str(changed_files_path),
                 "ascend_path": ascend_path,

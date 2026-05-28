@@ -1,8 +1,11 @@
 """OpenCode-based replacement for AdapterCrew.
 
 Spawns `opencode run` as a subprocess with a multi-agent orchestrator prompt.
-The main agent delegates to patch_analyzer → code_adapter → code_reviewer subagents,
-then returns a JSON-serializable AdaptResult.
+The orchestrator delegates to subagents in sequence, with iterative feedback loops:
+  patch_analyzer ↔ analyzer_qa  (up to 3 rounds)
+  code_adapter   ↔ code_reviewer (up to 3 rounds)
+
+Each subagent's output is archived to the step directory.
 """
 from __future__ import annotations
 
@@ -48,10 +51,10 @@ def run_opencode_adapter(inputs: dict[str, Any]) -> AdaptResult:
     return _parse_result("".join(chunks))
 
 
-
 def _build_prompt(inputs: dict[str, Any]) -> str:
     mode = inputs.get("mode", "adapt")
     step_id = inputs.get("step_id", "")
+    step_dir = inputs.get("step_dir", "")
     patch_path = inputs.get("patch_path", "")
     changed_files_path = inputs.get("changed_files_path", "")
     ascend_path = inputs.get("ascend_path", "")
@@ -67,7 +70,7 @@ def _build_prompt(inputs: dict[str, Any]) -> str:
 Error logs to diagnose:
 {error_section}
 
-Read each log file above using read_file tool to get full error details.
+Read each log file above to get full error details.
 Read {reference_dir}/diagnosis-guide.md for error type → fix pattern mapping.
 Read {reference_dir}/error-pattern-examples.md for concrete fix examples.
 """
@@ -90,34 +93,55 @@ REPOSITORIES:
   vllm-ascend:  {ascend_path}
   reference:    {reference_dir}
 
+ARCHIVE DIRECTORY (write every subagent output here):
+  {step_dir}
+
 {task_description}
 
-YOUR WORKFLOW — use the Task tool to delegate in order:
+YOUR WORKFLOW:
 
-1. Spawn subagent "patch_analyzer" with:
-   - The task description above
-   - Instruction to read the patch and reference guides
-   - Ask for: subsystems touched, vllm-ascend files affected, change plan, version guard assessment
+━━━ PHASE 1: Analysis + QA (up to 3 rounds) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-2. Spawn subagent "analyzer_qa" with:
-   - The patch_analyzer's full output as context
-   - The patch at {patch_path} and changed files at {changed_files_path} for cross-checking
-   - Reference dir: {reference_dir}
-   - If it returns REJECTED, go back to step 1 with the rejection feedback and retry once.
+Round loop (max 3):
+  a) Spawn subagent "patch_analyzer" with the task description above.
+     - Pass all inputs: mode, patch_path, changed_files_path, ascend_path,
+       release_tag, reference_dir, and any QA rejection feedback from prior round.
+     - After it responds, write its full output to: {step_dir}/analysis.md
+       (append if file exists, prepend "## Round N\\n")
 
-3. Spawn subagent "code_adapter" with:
-   - The approved patch_analyzer output as context
-   - The same inputs (ascend_path, patch_path, release_tag, reference_dir)
-   - Instruction to apply all required changes and run: git -C {ascend_path} diff HEAD
+  b) Spawn subagent "analyzer_qa" with:
+     - The patch_analyzer's full output
+     - patch_path: {patch_path}, changed_files_path: {changed_files_path}
+     - reference_dir: {reference_dir}
+     - After it responds, write its full output to: {step_dir}/analysis_qa.md
+       (append if file exists, prepend "## Round N\\n")
 
-4. Spawn subagent "code_reviewer" with:
-   - The patch_analyzer's plan and code_adapter's diff as context
-   - ascend_path: {ascend_path}, release_tag: {release_tag}
-   - Instruction to verify all changes are correct and complete
+  c) If analyzer_qa returns REJECTED: feed the rejection back to patch_analyzer
+     and repeat the round. If APPROVED or max rounds reached: proceed to Phase 2.
 
-5. Collect the reviewer's JSON output and return it as your final answer verbatim.
+━━━ PHASE 2: Code Adaptation + Review (up to 3 rounds) ━━━━━━━━━━━━━━━━━━━━━
 
-The reviewer's output must be a JSON block in this format:
+Round loop (max 3):
+  a) Spawn subagent "code_adapter" with:
+     - The approved patch_analyzer output as context
+     - mode, ascend_path, patch_path, release_tag, reference_dir
+     - Any reviewer feedback from prior round
+     - After it responds, write its full output to: {step_dir}/adaptation_log.md
+       (append if file exists, prepend "## Round N\\n")
+
+  b) Spawn subagent "code_reviewer" with:
+     - The patch_analyzer's plan and code_adapter's latest output
+     - ascend_path: {ascend_path}, release_tag: {release_tag}
+     - reference_dir: {reference_dir}
+     - After it responds, write its full output to: {step_dir}/review.md
+       (append if file exists, prepend "## Round N\\n")
+
+  c) If code_reviewer finds issues: feed them back to code_adapter and repeat.
+     If APPROVED or max rounds reached: proceed to final output.
+
+━━━ FINAL OUTPUT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Return the code_reviewer's final JSON block verbatim as your answer:
 ```json
 {{
   "modified_files": ["vllm_ascend/foo.py"],
@@ -128,20 +152,9 @@ The reviewer's output must be a JSON block in this format:
 """
 
 
-def _parse_result(jsonl_output: str) -> AdaptResult:
-    text_parts: list[str] = []
-    for line in jsonl_output.strip().splitlines():
-        try:
-            event = json.loads(line)
-            if event.get("type") == "text":
-                text_parts.append(event.get("text", ""))
-        except json.JSONDecodeError:
-            continue
-
-    full_text = "".join(text_parts)
-
+def _parse_result(output: str) -> AdaptResult:
     # Extract the last JSON block from the output
-    matches = re.findall(r"```json\s*(.*?)\s*```", full_text, re.DOTALL)
+    matches = re.findall(r"```json\s*(.*?)\s*```", output, re.DOTALL)
     if matches:
         try:
             data = json.loads(matches[-1])
@@ -149,5 +162,5 @@ def _parse_result(jsonl_output: str) -> AdaptResult:
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # Fallback: return summary with raw text
-    return AdaptResult(step_summary=full_text[-4000:] if full_text else "")
+    # Fallback: return summary with raw text tail
+    return AdaptResult(step_summary=output[-4000:] if output else "")
