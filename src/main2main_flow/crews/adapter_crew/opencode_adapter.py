@@ -93,17 +93,23 @@ YOUR WORKFLOW — use the Task tool to delegate in order:
    - Instruction to read the patch and reference guides
    - Ask for: subsystems touched, vllm-ascend files affected, change plan, version guard assessment
 
-2. Spawn subagent "code_adapter" with:
+2. Spawn subagent "analyzer_qa" with:
    - The patch_analyzer's full output as context
+   - The patch at {patch_path} and changed files at {changed_files_path} for cross-checking
+   - Reference dir: {reference_dir}
+   - If it returns REJECTED, go back to step 1 with the rejection feedback and retry once.
+
+3. Spawn subagent "code_adapter" with:
+   - The approved patch_analyzer output as context
    - The same inputs (ascend_path, patch_path, release_tag, reference_dir)
    - Instruction to apply all required changes and run: git -C {ascend_path} diff HEAD
 
-3. Spawn subagent "code_reviewer" with:
+4. Spawn subagent "code_reviewer" with:
    - The patch_analyzer's plan and code_adapter's diff as context
    - ascend_path: {ascend_path}, release_tag: {release_tag}
    - Instruction to verify all changes are correct and complete
 
-4. Collect the reviewer's JSON output and return it as your final answer verbatim.
+5. Collect the reviewer's JSON output and return it as your final answer verbatim.
 
 The reviewer's output must be a JSON block in this format:
 ```json
