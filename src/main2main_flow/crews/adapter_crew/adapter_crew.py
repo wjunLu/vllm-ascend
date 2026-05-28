@@ -1,3 +1,5 @@
+import os
+
 from crewai import Agent, Crew, LLM, Process, Task
 from crewai.agents.agent_builder.base_agent import BaseAgent
 from crewai.project import CrewBase, agent, crew, task
@@ -114,6 +116,7 @@ class AdapterCrew:
             agents=self.agents,
             tasks=self.tasks,
             process=Process.hierarchical,
-            manager_llm=LLM(model="claude-sonnet-4-6"),
+            manager_llm="claude-sonnet-4-6",
             verbose=True,
+            output_log_file="logs.txt",
         )

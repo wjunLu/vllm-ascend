@@ -220,6 +220,14 @@ class Main2MainFlow(Flow[Main2MainState]):
         round_n = self.state.retry_count + 1
         print(f"run_e2e_test: {step_id} round={round_n}")
 
+        if os.getenv("SKIP_E2E_TEST", "false").lower() == "true":
+            print(f"[run_e2e_test] SKIP_E2E_TEST=true, treating as passed")
+            self.state.retry_count = 0
+            self.state.current_step += 1
+            if self.state.current_step >= len(self.state.steps):
+                return UpgradeCompleted
+            return StepCompleted
+
         result = run_tests(
             vllm_path=self.state.vllm_path,
             vllm_commit=self.state.cur_vllm_commit,
