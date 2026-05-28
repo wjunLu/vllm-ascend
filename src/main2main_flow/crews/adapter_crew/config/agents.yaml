@@ -125,8 +125,11 @@ code_reviewer:
     Your final output MUST end with a JSON block:
     ```json
     {{
+      "approved": true,
+      "issues": [],
       "modified_files": ["list of changed vllm-ascend files, empty if no-op"],
-      "is_noop": false,
-      "step_summary": "what was verified, issues resolved, files changed, version guards added"
+      "is_noop": false
     }}
     ```
+    Set "approved": false and list specific issues in "issues" if anything is wrong.
+    Set "approved": true and "issues": [] only when everything is verified correct.
