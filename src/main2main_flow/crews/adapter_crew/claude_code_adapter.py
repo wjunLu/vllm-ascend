@@ -50,10 +50,27 @@ class AdaptResult(BaseModel):
 # ── main entry point ──────────────────────────────────────────────────────────
 
 def run_claude_code_adapter(inputs: dict[str, Any]) -> AdaptResult:
+    prompt = _orchestrator_prompt(inputs)
+    step_dir = inputs.get("step_dir", "")
+    log_path = Path(step_dir) / "claude_code.log" if step_dir else None
+
+    # print prompt for debugging
+    print(f"\n{'═'*60}")
+    print("ORCHESTRATOR PROMPT:")
+    print(f"{'═'*60}")
+    print(prompt)
+    print(f"{'═'*60}\n")
+
+    if log_path:
+        log_path.write_text(
+            f"{'═'*60}\nORCHESTRATOR PROMPT:\n{'═'*60}\n{prompt}\n{'═'*60}\n\n",
+            encoding="utf-8",
+        )
+
     proc = subprocess.Popen(
         [
             "claude",
-            "-p", _orchestrator_prompt(inputs),
+            "-p", prompt,
             "--output-format", "stream-json",
             "--verbose",
             "--dangerously-skip-permissions",
@@ -66,15 +83,22 @@ def run_claude_code_adapter(inputs: dict[str, Any]) -> AdaptResult:
 
     lines: list[str] = []
     assert proc.stdout is not None
-    for line in proc.stdout:
-        lines.append(line)
-        _print_event(line)
+    log_fh = log_path.open("a", encoding="utf-8") if log_path else None
+    try:
+        for line in proc.stdout:
+            lines.append(line)
+            _print_event(line)
+            if log_fh:
+                _log_event(line, log_fh)
+    finally:
+        if log_fh:
+            log_fh.close()
     proc.wait()
 
     return _parse_result("".join(lines))
 
 
-# ── event printer ─────────────────────────────────────────────────────────────
+# ── event printer + logger ───────────────────────────────────────────────────
 
 def _print_event(line: str) -> None:
     try:
@@ -115,6 +139,49 @@ def _print_event(line: str) -> None:
 
     elif t == "result" and ev.get("is_error"):
         print(f"\n[error] {ev.get('result', '')}", flush=True)
+
+
+# ── event logger ─────────────────────────────────────────────────────────────
+
+def _log_event(line: str, fh: Any) -> None:
+    try:
+        ev = json.loads(line)
+    except json.JSONDecodeError:
+        fh.write(line)
+        return
+
+    t = ev.get("type")
+
+    if t == "assistant":
+        for block in ev.get("message", {}).get("content", []):
+            btype = block.get("type")
+            if btype == "text":
+                fh.write(block.get("text", ""))
+            elif btype == "tool_use":
+                name = block.get("name", "")
+                inp  = block.get("input", {})
+                if name == "Agent":
+                    fh.write(f"\n{'━'*60}\n▶ subagent [{inp.get('subagent_type','?')}] starting\n{'━'*60}\n")
+                else:
+                    fh.write(f"\n[{name}] ← {json.dumps(inp, ensure_ascii=False)[:500]}\n")
+
+    elif t == "user":
+        for block in ev.get("message", {}).get("content", []):
+            if block.get("type") != "tool_result":
+                continue
+            content = block.get("content", "")
+            texts = (
+                [c["text"] for c in content if c.get("type") == "text" and c.get("text")]
+                if isinstance(content, list)
+                else ([content] if isinstance(content, str) and content else [])
+            )
+            for text in texts:
+                fh.write(f"\n{'─'*60}\n◀ tool result:\n{text}\n{'─'*60}\n")
+
+    elif t == "result":
+        fh.write(f"\n{'═'*60}\nFINAL RESULT:\n{ev.get('result','')}\n{'═'*60}\n")
+
+    fh.flush()
 
 
 # ── result parser ─────────────────────────────────────────────────────────────
