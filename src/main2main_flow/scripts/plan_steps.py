@@ -18,9 +18,10 @@ Output:
 from __future__ import annotations
 
 import math
-import subprocess
 from pathlib import Path
 from typing import Any
+
+from main2main_flow.utils import run_git
 
 LINE_BUDGET = 1000
 BASE_LINE_BUDGET = 1000
@@ -31,19 +32,8 @@ def _commit_count_budget(line_budget: int = LINE_BUDGET) -> int:
     return max(1, round(BASE_COMMIT_COUNT_BUDGET * math.sqrt(line_budget / BASE_LINE_BUDGET)))
 
 
-def _run_git(repo: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout
-
-
 def _list_commits(repo: Path, base: str, target: str) -> list[dict[str, str]]:
-    log_output = _run_git(
+    log_output = run_git(
         repo, "log", "--reverse", "--format=%H%x1f%s", f"{base}..{target}"
     )
     commits: list[dict[str, str]] = []
@@ -59,7 +49,7 @@ def _list_commits(repo: Path, base: str, target: str) -> list[dict[str, str]]:
 
 
 def _vllm_lines_for_commit(repo: Path, sha: str) -> int:
-    output = _run_git(repo, "diff-tree", "--no-commit-id", "-r", "--numstat", sha, "--", ":(top)vllm/")
+    output = run_git(repo, "diff-tree", "--no-commit-id", "-r", "--numstat", sha, "--", ":(top)vllm/")
     total = 0
     for line in output.strip().splitlines():
         if not line.strip():
@@ -128,12 +118,12 @@ def _plan_steps(
 
 def _enrich_steps_with_diff(vllm_path: Path, steps: list[dict[str, Any]]) -> None:
     for step in steps:
-        step["upstream_patch"] = _run_git(
+        step["upstream_patch"] = run_git(
             vllm_path, "diff",
             f"{step['start_commit']}..{step['end_commit']}",
             "--", ":(top)vllm/",
         )
-        changed_files = _run_git(
+        changed_files = run_git(
             vllm_path, "diff", "--name-only",
             f"{step['start_commit']}..{step['end_commit']}",
             "--", ":(top)vllm/",

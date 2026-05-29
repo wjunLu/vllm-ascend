@@ -618,7 +618,7 @@ def run_tests(
         "failed_test_files_count": sum(r["failed_test_files_count"] for r in all_results),
         "failed_test_cases_count": sum(r["failed_test_cases_count"] for r in all_results),
     }
-    result_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"\nmain2main CI aggregated: {overall}  (can_commit={result['can_commit']})", flush=True)
     print(f"Total elapsed: {total_elapsed:.1f}s  ({total_elapsed/60:.1f} min)", flush=True)
     print(f"Result written to {result_path}", flush=True)

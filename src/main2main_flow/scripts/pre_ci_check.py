@@ -18,6 +18,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from main2main_flow.utils import run_git
+
 _TEMP_PATTERNS = [
     ".log",
     ".patch",
@@ -32,19 +34,8 @@ _TEMP_PATTERNS = [
 _VERSION_IS_RE = re.compile(r'vllm_version_is\(\s*["\']([^"\']+)["\']\s*\)')
 
 
-def _run_git(repo: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout
-
-
 def _get_added_lines(repo: Path) -> list[dict[str, str]]:
-    diff_output = _run_git(repo, "diff", "HEAD", "-U0")
+    diff_output = run_git(repo, "diff", "HEAD", "-U0")
     added: list[dict[str, str]] = []
     current_file = None
     current_line = 0
@@ -100,8 +91,8 @@ def _check_version_strings(added_lines: list[dict[str, str]], release_tag: str) 
 
 
 def _check_temp_files(repo: Path) -> dict:
-    status_output = _run_git(repo, "status", "--short")
-    untracked_output = _run_git(repo, "ls-files", "--others", "--exclude-standard")
+    status_output = run_git(repo, "status", "--short")
+    untracked_output = run_git(repo, "ls-files", "--others", "--exclude-standard")
 
     all_files: set[str] = set()
     for line in (status_output + untracked_output).strip().splitlines():
@@ -126,13 +117,6 @@ def run_check(ascend_path: str | Path, release_tag: str) -> dict:
     Returns a dict with 'all_passed' (bool) and 'checks' (list of check results).
     """
     repo = Path(ascend_path)
-
-    if not (repo / ".git").exists():
-        return {
-            "all_passed": False,
-            "error": f"{ascend_path} is not a git repository",
-            "checks": [],
-        }
 
     try:
         added_lines = _get_added_lines(repo)

@@ -19,22 +19,12 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
+from main2main_flow.utils import run_git
+
 COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
-
-
-def _run_git(repo: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout
 
 
 def _validate_commit(label: str, value: str) -> str:
@@ -45,7 +35,7 @@ def _validate_commit(label: str, value: str) -> str:
 
 
 def _tracked_files(repo: Path) -> list[Path]:
-    output = _run_git(repo, "ls-files", "-z")
+    output = run_git(repo, "ls-files", "-z")
     files: list[Path] = []
     for item in output.split("\0"):
         if item:

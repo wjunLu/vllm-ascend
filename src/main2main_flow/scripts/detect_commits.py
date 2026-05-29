@@ -14,9 +14,10 @@ Side-effects:
 from __future__ import annotations
 
 import re
-import subprocess
 import sys
 from pathlib import Path
+
+from main2main_flow.utils import run_git
 
 
 def _extract_from_conf_py(ascend_path: Path) -> dict[str, str | None]:
@@ -47,14 +48,7 @@ def _get_repo_head(repo_path: Path) -> str:
         print(f"Error: path does not exist: {repo_path}", file=sys.stderr)
         sys.exit(1)
 
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip()
+    return run_git(repo_path, "rev-parse", "HEAD").strip()
 
 
 def detect(

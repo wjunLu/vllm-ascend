@@ -3,7 +3,6 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 from typing import Literal
@@ -23,7 +22,8 @@ from main2main_flow.scripts.update_commit_reference import run_update
 from main2main_flow.utils import (
     UpgradeCompleted, StepCompleted, UpgradeFailed, StepRetryNeeded,
     HasCommit, HasNoCommit, resolve_path, WORKSPACE_DIR, DETECT_FILE, STEPS_FILE,
-    STEPS_DIR, VLLM_GIT_PATCH_FILE, VLLM_GIT_CHANGED_FILES
+    STEPS_DIR, VLLM_GIT_PATCH_FILE, VLLM_GIT_CHANGED_FILES, PRE_CI_CHECK_FILE,
+    EACH_STEP_SUMMARY_FILE, EACH_STEP_TARGET_PATCH_FILE, run_git
 )
 
 _REFERENCE_DIR = str(Path(__file__).parent / "reference")
@@ -87,7 +87,7 @@ class Main2MainFlow(Flow[Main2MainState]):
         self.state.release_tag = result.get("compat_tag") or ""
 
         (WORKSPACE_DIR / DETECT_FILE).write_text(
-            json.dumps(result, indent=2) + "\n", encoding="utf-8"
+            json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
 
         print(f"[analyze] base={result['base_commit'][:8]}  "
@@ -102,7 +102,7 @@ class Main2MainFlow(Flow[Main2MainState]):
         self.state.total_steps = len(plan["steps"])
 
         (WORKSPACE_DIR / STEPS_FILE).write_text(
-            json.dumps(plan, indent=2) + "\n", encoding="utf-8"
+            json.dumps(plan, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
 
         if self.state.total_steps == 0:
@@ -120,6 +120,7 @@ class Main2MainFlow(Flow[Main2MainState]):
             step_dir.mkdir(parents=True, exist_ok=True)
             (step_dir / VLLM_GIT_PATCH_FILE).write_text(step["upstream_patch"], encoding="utf-8")
             (step_dir / VLLM_GIT_CHANGED_FILES).write_text(step["changed_files"], encoding="utf-8")
+
         return HasCommit
 
     @listen(HasNoCommit)
@@ -139,10 +140,7 @@ class Main2MainFlow(Flow[Main2MainState]):
 
         if not has_test_results:
             # 1. checkout vllm 到本轮目标 commit
-            subprocess.run(
-                ["git", "-C", vllm_path, "checkout", step["end_commit"]],
-                check=True,
-            )
+            run_git(vllm_path, "checkout", step["end_commit"])
             print(f"[ai_analysis] {step_id}: vllm checked out to {step['end_commit'][:8]}")
 
             # 2. 更新所有 tracked 文件里的 vllm commit 引用
@@ -184,12 +182,12 @@ class Main2MainFlow(Flow[Main2MainState]):
             })
 
             check_result = run_check(ascend_path, self.state.release_tag)
-            log_path = step_dir / f"pre_ci_check-round-{attempt}.json"
-            log_path.write_text(json.dumps(check_result, indent=2, ensure_ascii=False))
-
             if check_result["all_passed"]:
                 print(f"[ai_analysis] {step_id}: pre_ci passed on attempt {attempt}")
                 break
+            log_path = step_dir / PRE_CI_CHECK_FILE
+            log_path.write_text(json.dumps(check_result, indent=2, ensure_ascii=False))
+
             error_logs = [str(log_path)]
             print(f"[ai_analysis] {step_id}: pre_ci failed → {log_path}")
 
@@ -197,19 +195,13 @@ class Main2MainFlow(Flow[Main2MainState]):
 
         # 4. 输出两个文件：本轮总结 + 全量累积 patch
         summary = adapt_result.step_summary if adapt_result else ""
-        (step_dir / "summary.md").write_text(summary, encoding="utf-8")
+        (step_dir / EACH_STEP_SUMMARY_FILE).write_text(summary, encoding="utf-8")
 
-        adaptation_patch_path = step_dir / "adaptation.patch"
-        adaptation_patch = subprocess.run(
-            ["git", "-C", ascend_path, "diff", "HEAD"],
-            capture_output=True, text=True, check=True,
-        ).stdout
+        adaptation_patch_path = step_dir / EACH_STEP_TARGET_PATCH_FILE
+        adaptation_patch = run_git(ascend_path, "diff", "HEAD")
         adaptation_patch_path.write_text(adaptation_patch, encoding="utf-8")
 
-        ascend_head = subprocess.run(
-            ["git", "-C", ascend_path, "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
+        ascend_head = run_git(ascend_path, "rev-parse", "HEAD").strip()
 
         self.state.cur_vllm_commit = step["end_commit"]
         self.state.cur_ascend_commit = ascend_head

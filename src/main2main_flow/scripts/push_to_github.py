@@ -23,6 +23,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from main2main_flow.utils import run_git
+
 DEFAULT_STEPS_DIR = Path("/tmp/main2main/steps")
 DEFAULT_SUMMARY_PATH = Path("output/final_summary.md")
 
@@ -53,35 +55,20 @@ def push_and_create_pr(
     # 2. Create a new branch
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     branch = f"update/main2main-{timestamp}"
-    subprocess.run(
-        ["git", "-C", str(ascend_path), "checkout", "-b", branch],
-        check=True,
-    )
+    run_git(ascend_path, "checkout", "-b", branch)
     print(f"[push] Created branch '{branch}'.")
 
     # 3. Apply the patch
-    subprocess.run(
-        ["git", "-C", str(ascend_path), "apply", str(last_patch)],
-        check=True,
-    )
+    run_git(ascend_path, "apply", str(last_patch))
 
     # 4. Stage all changes introduced by the patch and commit
-    subprocess.run(
-        ["git", "-C", str(ascend_path), "add", "-A"],
-        check=True,
-    )
+    run_git(ascend_path, "add", "-A")
     commit_msg = f"main2main: sync vllm upstream ({timestamp})"
-    subprocess.run(
-        ["git", "-C", str(ascend_path), "commit", "-s", "-m", commit_msg],
-        check=True,
-    )
+    run_git(ascend_path, "commit", "-s", "-m", commit_msg)
     print(f"[push] Committed patch as '{commit_msg}'.")
 
     # 5. Push branch to origin
-    subprocess.run(
-        ["git", "-C", str(ascend_path), "push", "origin", branch],
-        check=True,
-    )
+    run_git(ascend_path, "push", "origin", branch)
     print(f"[push] Pushed branch '{branch}' to origin.")
 
     # 6. Create the PR; use final_summary.md (written by the summary crew) as description

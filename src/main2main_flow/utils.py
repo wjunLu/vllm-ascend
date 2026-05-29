@@ -9,13 +9,26 @@ StepRetryNeeded = "StepRetryNeeded"
 HasCommit = "HasCommit"
 HasNoCommit = "HasNoCommit"
 
-# Project-relative workspace: <project_root>/workspace/
 WORKSPACE_DIR = Path(__file__).parent.parent.parent / "workspace"
 DETECT_FILE = "detect.json"
 STEPS_FILE = "steps.json"
 STEPS_DIR = "steps"
 VLLM_GIT_PATCH_FILE = "upstream.patch"
 VLLM_GIT_CHANGED_FILES = "changed_files.txt"
+PRE_CI_CHECK_FILE = "pre_ci_check.json"
+EACH_STEP_SUMMARY_FILE = "step_summary.json"
+EACH_STEP_TARGET_PATCH_FILE = "step_target.patch"
+
+def run_git(repo: Path | str, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout
+
 
 def is_git_url(path: str) -> bool:
     return path.startswith(("https://", "http://", "git@"))
