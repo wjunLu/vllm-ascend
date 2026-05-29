@@ -20,8 +20,8 @@ from main2main_flow.scripts.push_to_github import push_and_create_pr
 from main2main_flow.scripts.run_tests import run_tests
 from main2main_flow.scripts.update_commit_reference import run_update
 from main2main_flow.utils import (
-    UpgradeCompleted, StepCompleted, UpgradeFailed,
-    HasCommit, HasNoCommit, resolve_path, WORKSPACE_DIR, DETECT_FILE, STEPS_FILE,
+    UpgradeCompleted, UpgradeFailed,
+    HasCommit, HasNoCommit, resolve_path, WORKSPACE_DIR, DETECT_FILE, STEPS_FILE, FINAL_SUMMARY_FILE, FINAL_TARGET_PATCH_FILE,
     STEPS_DIR, VLLM_GIT_PATCH_FILE, VLLM_GIT_CHANGED_FILES, PRE_CI_CHECK_FILE,
     EACH_STEP_SUMMARY_FILE, EACH_STEP_TARGET_PATCH_FILE, run_git
 )
@@ -163,9 +163,8 @@ class Main2MainFlow(Flow[Main2MainState]):
 
         vllm_path = self.state.vllm_path
         ascend_path = self.state.vllm_ascend_path
-        has_test_results = (step_dir / "tests").exists()
 
-        if not has_test_results:
+        if self.state.retry_count == 0:
             run_git(vllm_path, "checkout", step["end_commit"])
             print(f"[ai_analysis] {step_id}: vllm checked out to {step['end_commit'][:8]}")
 
@@ -181,7 +180,8 @@ class Main2MainFlow(Flow[Main2MainState]):
             except ValueError:
                 print(f"[ai_analysis] {step_id}: commit ref already updated, skipping")
         else:
-            print(f"[ai_analysis] {step_id}: tests/ exists, skipping to fix mode")
+            print(f"[ai_analysis] {step_id}: retry count {self.state.retry_count}, \
+ skipping to fix mode")
 
         error_logs: list[str] = list(self.state.test_errors)
         patch_path = step_dir / VLLM_GIT_PATCH_FILE
@@ -237,16 +237,11 @@ class Main2MainFlow(Flow[Main2MainState]):
     def _run_e2e_test(self):
         step = self.state.steps[self.state.current_step]
         step_id = step["id"]
-        round_n = self.state.retry_count + 1
-        print(f"run_e2e_test: step-{step_id} round={round_n}")
+        print(f"run_e2e_test: step-{step_id} round={self.state.retry_count}")
 
         if os.getenv("SKIP_E2E_TEST", "false").lower() == "true":
             print(f"[run_e2e_test] SKIP_E2E_TEST=true, treating as passed")
-            self.state.retry_count = 0
-            self.state.current_step += 1
-            if self.state.current_step >= self.state.total_steps:
-                return UpgradeCompleted
-            return StepCompleted
+            return True
 
         print(f"The adaptation patch is at: {self.state.cur_patch_path}")
         result = run_tests(
@@ -259,12 +254,12 @@ class Main2MainFlow(Flow[Main2MainState]):
             total_cards=8,
             suites=["e2e-2card-light"],
             remote="env",
-            round_number=round_n,
+            round_number=self.state.retry_count,
             log_dir=str(WORKSPACE_DIR / STEPS_DIR),
         )
 
         test_passed = result.get("can_commit", False)
-        summary_log = str(WORKSPACE_DIR / STEPS_DIR / str(step_id) / "tests" / f"round-{round_n}-summary.json")
+        summary_log = str(WORKSPACE_DIR / STEPS_DIR / str(step_id) / "tests" / f"round-{self.state.retry_count}-summary.json")
         print(f"test_passed={test_passed}, ci_result={result.get('ci_result')}")
 
         if not test_passed:
@@ -274,17 +269,13 @@ class Main2MainFlow(Flow[Main2MainState]):
 
     @listen(process_steps)
     def generate_final_post(self):
-        ci_results_dir = os.getenv("CI_RESULTS_DIR", str(WORKSPACE_DIR / "ci_results"))
-        steps_dir = os.getenv("STEPS_DIR", str(WORKSPACE_DIR / STEPS_DIR))
-        result = (
-            SummaryCrew()
-            .crew()
-            .kickoff(inputs={
-                "ci_results_dir": ci_results_dir,
-                "steps_dir": steps_dir,
-            })
-        )
-        return result
+        # copy summry and target patch from workspace/steps/{current_step_id} folder to workspace/
+        if self.state.current_step == 0:
+            print(f"[generate_final_post] fail to upgrade, no step success")
+            return
+        step_dir = WORKSPACE_DIR / STEPS_DIR / f"step-{self.state.current_step}"
+        shutil.copy2(step_dir / EACH_STEP_SUMMARY_FILE, WORKSPACE_DIR / FINAL_SUMMARY_FILE)
+        shutil.copy2(step_dir / EACH_STEP_TARGET_PATCH_FILE, WORKSPACE_DIR / FINAL_TARGET_PATCH_FILE)
 
     @listen(generate_final_post)
     def push_to_github(self):
