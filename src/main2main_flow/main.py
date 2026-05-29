@@ -127,23 +127,39 @@ class Main2MainFlow(Flow[Main2MainState]):
     def has_no_commit(self):
         print(f"[done] 仓库已同步，无需适配，流程结束。")
 
-    @listen(or_(HasCommit, StepCompleted, StepRetryNeeded))
-    def ai_analysis(self):
+    @listen(HasCommit)
+    def process_steps(self):
+        while self.state.current_step < self.state.total_steps:
+            self._ai_analysis()
+            result = self._run_e2e_test()
+            if result == UpgradeCompleted or result == UpgradeFailed:
+                return result
+        return UpgradeCompleted
+
+    def _ai_analysis(self):
+        if os.getenv("SKIP_AI_ANALYSIS", "false").lower() == "true":
+            step = self.state.steps[self.state.current_step]
+            step_id = step["id"]
+            step_dir = WORKSPACE_DIR / STEPS_DIR / step_id
+            print(f"[ai_analysis] SKIP_AI_ANALYSIS=true, skipping for step {step_id}")
+            ascend_head = run_git(self.state.vllm_ascend_path, "rev-parse", "HEAD").strip()
+            self.state.cur_vllm_commit = step["end_commit"]
+            self.state.cur_ascend_commit = ascend_head
+            self.state.cur_patch_path = str(step_dir / EACH_STEP_TARGET_PATCH_FILE)
+            return
+
         step = self.state.steps[self.state.current_step]
         step_id = step["id"]
         step_dir = WORKSPACE_DIR / STEPS_DIR / step_id
 
         vllm_path = self.state.vllm_path
         ascend_path = self.state.vllm_ascend_path
-        # 如果 step 目录下已有 tests/ 说明 e2e 跑过了，直接进入 fix 模式
         has_test_results = (step_dir / "tests").exists()
 
         if not has_test_results:
-            # 1. checkout vllm 到本轮目标 commit
             run_git(vllm_path, "checkout", step["end_commit"])
             print(f"[ai_analysis] {step_id}: vllm checked out to {step['end_commit'][:8]}")
 
-            # 2. 更新所有 tracked 文件里的 vllm commit 引用
             try:
                 ref_result = run_update(
                     ascend_path=Path(ascend_path),
@@ -158,8 +174,6 @@ class Main2MainFlow(Flow[Main2MainState]):
         else:
             print(f"[ai_analysis] {step_id}: tests/ exists, skipping to fix mode")
 
-        # 3. AI 适配 + pre_ci 校验循环
-        # error_logs 统一为日志文件路径列表，来源不区分（pre_ci 或 e2e CI）
         error_logs: list[str] = list(self.state.test_errors)
         patch_path = step_dir / VLLM_GIT_PATCH_FILE
         changed_files_path = step_dir / VLLM_GIT_CHANGED_FILES
@@ -193,7 +207,6 @@ class Main2MainFlow(Flow[Main2MainState]):
 
         self.state.test_errors = []
 
-        # 4. 输出两个文件：本轮总结 + 全量累积 patch
         summary = adapt_result.step_summary if adapt_result else ""
         (step_dir / EACH_STEP_SUMMARY_FILE).write_text(summary, encoding="utf-8")
 
@@ -211,10 +224,8 @@ class Main2MainFlow(Flow[Main2MainState]):
               f"is_noop={getattr(adapt_result, 'is_noop', False)}, "
               f"modified={getattr(adapt_result, 'modified_files', [])}, "
               f"vllm={step['end_commit'][:8]}, ascend={ascend_head[:8]}")
-        return adapt_result.step_summary if adapt_result else ""
 
-    @router(ai_analysis)
-    def run_e2e_test(self) -> Literal["StepCompleted", "UpgradeCompleted", "UpgradeFailed", "StepRetryNeeded"]:
+    def _run_e2e_test(self):
         step = self.state.steps[self.state.current_step]
         step_id = step["id"]
         round_n = self.state.retry_count + 1
@@ -237,7 +248,6 @@ class Main2MainFlow(Flow[Main2MainState]):
             patch_path=self.state.cur_patch_path or None,
             step_id=step_id,
             total_cards=8,
-            # suites=["e2e-singlecard-light", "e2e-2card-light", "e2e-4card-light"],
             suites=["e2e-2card-light"],
             remote="env",
             round_number=round_n,
@@ -265,7 +275,7 @@ class Main2MainFlow(Flow[Main2MainState]):
             else:
                 return StepRetryNeeded
 
-    @listen(or_(UpgradeCompleted, UpgradeFailed))
+    @listen(process_steps)
     def generate_final_post(self):
         ci_results_dir = os.getenv("CI_RESULTS_DIR", str(WORKSPACE_DIR / "ci_results"))
         steps_dir = os.getenv("STEPS_DIR", str(WORKSPACE_DIR / STEPS_DIR))
