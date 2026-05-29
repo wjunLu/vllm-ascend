@@ -112,14 +112,16 @@ class Main2MainFlow(Flow[Main2MainState]):
             with open(patch_path, "w") as f:
                 subprocess.run(
                     ["git", "-C", vllm_path, "diff",
-                     f"{step['start_commit']}..{step['end_commit']}"],
+                     f"{step['start_commit']}..{step['end_commit']}",
+                     "--", "vllm/"],
                     stdout=f, check=True,
                 )
             changed_files_path = step_dir / "changed-files.txt"
             with open(changed_files_path, "w") as f:
                 subprocess.run(
                     ["git", "-C", vllm_path, "diff", "--name-only",
-                     f"{step['start_commit']}..{step['end_commit']}"],
+                     f"{step['start_commit']}..{step['end_commit']}",
+                     "--", "vllm/"],
                     stdout=f, check=True,
                 )
         return HasCommit

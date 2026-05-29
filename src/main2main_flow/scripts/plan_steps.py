@@ -2,17 +2,15 @@
 """Deterministic step planner for the main2main upgrade pipeline.
 
 Splits a range of upstream vLLM commits into ordered steps based on changed
-lines in vllm/ source files.
+lines in vllm/ source files. Commits that do not touch vllm/ are skipped.
 
 Algorithm:
   1. git rev-list --reverse base..target → ordered commit list
   2. For each commit, git diff-tree --numstat → changed files + lines
-  3. Classify files: vllm/ source → "vllm"; pinned dependency files → "requirements";
-     everything else (docs, tests, CI) → "ignored"
-  4. Requirements commits get their own isolated step
-  5. Commits accumulate into a step until vllm_changed_lines > LINE_BUDGET
+  3. Keep only files under vllm/; skip commits with no vllm/ changes
+  4. Commits accumulate into a step until vllm_changed_lines > LINE_BUDGET
      or the step reaches the sublinear commit-count budget
-  6. A single commit with vllm_changed_lines > LINE_BUDGET becomes its own step
+  5. A single commit with vllm_changed_lines > LINE_BUDGET becomes its own step
 
 Output:
   - <workspace>/steps.json  — machine-readable plan
@@ -106,25 +104,16 @@ def _classify_file(filepath: str) -> str:
 
 def _commit_stats(files: list[dict[str, Any]]) -> dict[str, Any]:
     vllm_lines = 0
-    total_lines = 0
-    categories: set[str] = set()
-    has_requirements = False
+    vllm_files: list[str] = []
 
     for f in files:
-        cat = _classify_file(f["path"])
-        categories.add(cat)
-        total_lines += f["lines"]
-        if cat == "vllm":
+        if f["path"].startswith("vllm/"):
             vllm_lines += f["lines"]
-        if cat == "requirements":
-            has_requirements = True
+            vllm_files.append(f["path"])
 
     return {
         "vllm_changed_lines": vllm_lines,
-        "total_changed_lines": total_lines,
-        "categories": sorted(categories),
-        "has_requirements": has_requirements,
-        "files": [f["path"] for f in files],
+        "files": vllm_files,
     }
 
 
@@ -136,13 +125,10 @@ def _plan_steps(
     steps: list[dict[str, Any]] = []
     current_commits: list[dict[str, str]] = []
     current_vllm_lines = 0
-    current_total_lines = 0
-    current_cats: set[str] = set()
     current_files: list[str] = []
 
     def _flush(start: str) -> None:
-        nonlocal current_commits, current_vllm_lines, current_total_lines
-        nonlocal current_cats, current_files
+        nonlocal current_commits, current_vllm_lines, current_files
         if not current_commits:
             return
         steps.append({
@@ -152,55 +138,34 @@ def _plan_steps(
             "commit_count": len(current_commits),
             "start_commit": start,
             "end_commit": current_commits[-1]["sha"],
-            "categories": sorted(current_cats),
             "vllm_changed_lines": current_vllm_lines,
-            "total_changed_lines": current_total_lines,
             "line_budget": LINE_BUDGET,
             "commit_count_budget": _commit_count_budget(),
             "files_changed": sorted(set(current_files)),
         })
         current_commits = []
         current_vllm_lines = 0
-        current_total_lines = 0
-        current_cats = set()
         current_files = []
 
     prev_end = base_commit
     for commit in commits:
         st = stats_per_commit.get(commit["sha"], {})
         vllm_lines = st.get("vllm_changed_lines", 0)
-        total_lines = st.get("total_changed_lines", 0)
-        cats = set(st.get("categories", []))
         files = st.get("files", [])
-        has_req = st.get("has_requirements", False)
 
-        # Requirements commits get their own isolated step
-        if has_req:
-            _flush(prev_end)
-            prev_end = steps[-1]["end_commit"] if steps else base_commit
-            current_commits = [commit]
-            current_vllm_lines = vllm_lines
-            current_total_lines = total_lines
-            current_cats = cats
-            current_files = list(files)
-            _flush(prev_end)
-            prev_end = steps[-1]["end_commit"] if steps else base_commit
+        if vllm_lines == 0:
             continue
 
-        # Single commit exceeding budget → solo step
         if vllm_lines > LINE_BUDGET:
             _flush(prev_end)
             prev_end = steps[-1]["end_commit"] if steps else base_commit
             current_commits = [commit]
             current_vllm_lines = vllm_lines
-            current_total_lines = total_lines
-            current_cats = cats
             current_files = list(files)
             _flush(prev_end)
             prev_end = steps[-1]["end_commit"] if steps else base_commit
             continue
 
-        # Would exceed step budget → flush first
         if (
             current_vllm_lines + vllm_lines > LINE_BUDGET
             or len(current_commits) >= _commit_count_budget()
@@ -210,8 +175,6 @@ def _plan_steps(
 
         current_commits.append(commit)
         current_vllm_lines += vllm_lines
-        current_total_lines += total_lines
-        current_cats.update(cats)
         current_files.extend(files)
 
     _flush(prev_end)
@@ -224,17 +187,15 @@ def _render_markdown(plan: dict[str, Any]) -> str:
         "",
         f"**Base:** `{plan['base_commit']}`",
         f"**Target:** `{plan['target_commit']}`",
-        f"**Commits:** {plan['total_commits']}  |  **Steps:** {len(plan['steps'])}",
+        f"**Steps:** {len(plan['steps'])}  |  **Total vllm commits:** {sum(s['commit_count'] for s in plan['steps'])}",
         "",
     ]
     for step in plan["steps"]:
         lines.append(
             f"## {step['id']} (commits: {step['commit_count']}, "
-            f"vllm: {step['vllm_changed_lines']} lines, "
-            f"total: {step['total_changed_lines']} lines)"
+            f"vllm: {step['vllm_changed_lines']} lines)"
         )
         lines.append("")
-        lines.append(f"- Categories: {', '.join(step['categories'])}")
         lines.append(f"- Range: `{step['start_commit'][:8]}..{step['end_commit'][:8]}`")
         lines.append("")
         for c in step["commits"]:
@@ -258,7 +219,7 @@ def run_plan(vllm_path: Path, base_commit: str, target_commit: str) -> dict[str,
     plan = {
         "base_commit": base_commit,
         "target_commit": target_commit,
-        "total_commits": len(commits),
+        "total_commits": sum(s["commit_count"] for s in steps),
         "steps": steps,
     }
 
