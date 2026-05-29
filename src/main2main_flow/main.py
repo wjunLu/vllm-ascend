@@ -22,7 +22,8 @@ from main2main_flow.scripts.run_tests import run_tests
 from main2main_flow.scripts.update_commit_reference import run_update
 from main2main_flow.utils import (
     UpgradeCompleted, StepCompleted, UpgradeFailed, StepRetryNeeded,
-    HasCommit, HasNoCommit, resolve_path, WORKSPACE_DIR,
+    HasCommit, HasNoCommit, resolve_path, WORKSPACE_DIR, DETECT_FILE, STEPS_FILE,
+    STEPS_DIR, VLLM_GIT_PATCH_FILE, VLLM_GIT_CHANGED_FILES
 )
 
 _REFERENCE_DIR = str(Path(__file__).parent / "reference")
@@ -82,8 +83,13 @@ class Main2MainFlow(Flow[Main2MainState]):
 
         # generate detect.json in workspace
         result, has_commit = detect(vllm_path, vllm_ascend_path,
-                        target_commit=self.state.target_commit or None)
+                                    self.state.target_commit or None)
         self.state.release_tag = result.get("compat_tag") or ""
+
+        (WORKSPACE_DIR / DETECT_FILE).write_text(
+            json.dumps(result, indent=2) + "\n", encoding="utf-8"
+        )
+
         print(f"[analyze] base={result['base_commit'][:8]}  "
               f"target={result['target_commit'][:8]}")
 
@@ -94,6 +100,10 @@ class Main2MainFlow(Flow[Main2MainState]):
         plan = run_plan(vllm_path, result["base_commit"], result["target_commit"])
         self.state.steps = plan["steps"]
         self.state.total_steps = len(plan["steps"])
+
+        (WORKSPACE_DIR / STEPS_FILE).write_text(
+            json.dumps(plan, indent=2) + "\n", encoding="utf-8"
+        )
 
         if self.state.total_steps == 0:
             return HasNoCommit
@@ -106,24 +116,10 @@ class Main2MainFlow(Flow[Main2MainState]):
         # generate every step folder in workspace
         for index in range(self.state.total_steps):
             step = self.state.steps[index]
-            step_dir = WORKSPACE_DIR / "steps" / step["id"]
+            step_dir = WORKSPACE_DIR / STEPS_DIR / step["id"]
             step_dir.mkdir(parents=True, exist_ok=True)
-            patch_path = step_dir / "upstream.patch"
-            with open(patch_path, "w") as f:
-                subprocess.run(
-                    ["git", "-C", vllm_path, "diff",
-                     f"{step['start_commit']}..{step['end_commit']}",
-                     "--", "vllm/"],
-                    stdout=f, check=True,
-                )
-            changed_files_path = step_dir / "changed-files.txt"
-            with open(changed_files_path, "w") as f:
-                subprocess.run(
-                    ["git", "-C", vllm_path, "diff", "--name-only",
-                     f"{step['start_commit']}..{step['end_commit']}",
-                     "--", "vllm/"],
-                    stdout=f, check=True,
-                )
+            (step_dir / VLLM_GIT_PATCH_FILE).write_text(step["upstream_patch"], encoding="utf-8")
+            (step_dir / VLLM_GIT_CHANGED_FILES).write_text(step["changed_files"], encoding="utf-8")
         return HasCommit
 
     @listen(HasNoCommit)
@@ -134,7 +130,7 @@ class Main2MainFlow(Flow[Main2MainState]):
     def ai_analysis(self):
         step = self.state.steps[self.state.current_step]
         step_id = step["id"]
-        step_dir = WORKSPACE_DIR / "steps" / step_id
+        step_dir = WORKSPACE_DIR / STEPS_DIR / step_id
 
         vllm_path = self.state.vllm_path
         ascend_path = self.state.vllm_ascend_path
@@ -164,11 +160,11 @@ class Main2MainFlow(Flow[Main2MainState]):
         else:
             print(f"[ai_analysis] {step_id}: tests/ exists, skipping to fix mode")
 
-        # 4. AI 适配 + pre_ci 校验循环
+        # 3. AI 适配 + pre_ci 校验循环
         # error_logs 统一为日志文件路径列表，来源不区分（pre_ci 或 e2e CI）
         error_logs: list[str] = list(self.state.test_errors)
-        patch_path = step_dir / "upstream.patch"
-        changed_files_path = step_dir / "changed-files.txt"
+        patch_path = step_dir / VLLM_GIT_PATCH_FILE
+        changed_files_path = step_dir / VLLM_GIT_CHANGED_FILES
         adapt_result: AdaptResult | None = None
 
         for attempt in range(1, 4):
@@ -199,7 +195,7 @@ class Main2MainFlow(Flow[Main2MainState]):
 
         self.state.test_errors = []
 
-        # 5. 输出两个文件：本轮总结 + 全量累积 patch
+        # 4. 输出两个文件：本轮总结 + 全量累积 patch
         summary = adapt_result.step_summary if adapt_result else ""
         (step_dir / "summary.md").write_text(summary, encoding="utf-8")
 
@@ -252,11 +248,11 @@ class Main2MainFlow(Flow[Main2MainState]):
             suites=["e2e-singlecard-light", "e2e-2card-light", "e2e-4card-light"],
             remote="env",
             round_number=round_n,
-            log_dir=str(WORKSPACE_DIR / "steps"),
+            log_dir=str(WORKSPACE_DIR / STEPS_DIR),
         )
 
         test_passed = result.get("can_commit", False)
-        summary_log = str(WORKSPACE_DIR / "steps" / str(step_id) / "tests" / f"round-{round_n}-summary.json")
+        summary_log = str(WORKSPACE_DIR / STEPS_DIR / str(step_id) / "tests" / f"round-{round_n}-summary.json")
         print(f"test_passed={test_passed}, ci_result={result.get('ci_result')}")
 
         if test_passed:
@@ -279,7 +275,7 @@ class Main2MainFlow(Flow[Main2MainState]):
     @listen(or_(UpgradeCompleted, UpgradeFailed))
     def generate_final_post(self):
         ci_results_dir = os.getenv("CI_RESULTS_DIR", str(WORKSPACE_DIR / "ci_results"))
-        steps_dir = os.getenv("STEPS_DIR", str(WORKSPACE_DIR / "steps"))
+        steps_dir = os.getenv("STEPS_DIR", str(WORKSPACE_DIR / STEPS_DIR))
         result = (
             SummaryCrew()
             .crew()

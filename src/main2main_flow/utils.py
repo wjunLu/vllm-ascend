@@ -11,7 +11,11 @@ HasNoCommit = "HasNoCommit"
 
 # Project-relative workspace: <project_root>/workspace/
 WORKSPACE_DIR = Path(__file__).parent.parent.parent / "workspace"
-
+DETECT_FILE = "detect.json"
+STEPS_FILE = "steps.json"
+STEPS_DIR = "steps"
+VLLM_GIT_PATCH_FILE = "upstream.patch"
+VLLM_GIT_CHANGED_FILES = "changed_files.txt"
 
 def is_git_url(path: str) -> bool:
     return path.startswith(("https://", "http://", "git@"))

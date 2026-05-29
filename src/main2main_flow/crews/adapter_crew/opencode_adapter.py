@@ -61,10 +61,6 @@ def run_opencode_adapter(inputs: dict[str, Any]) -> AdaptResult:
     if raw_path:
         raw_path.write_text("")
 
-    stderr_fh = None
-    if stderr_path:
-        stderr_fh = stderr_path.open("w", encoding="utf-8")
-
     proc = subprocess.Popen(
         [
             "opencode", "run",
@@ -73,7 +69,7 @@ def run_opencode_adapter(inputs: dict[str, Any]) -> AdaptResult:
             prompt,
         ],
         stdout=subprocess.PIPE,
-        stderr=stderr_fh or subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
     )
@@ -130,8 +126,6 @@ def run_opencode_adapter(inputs: dict[str, Any]) -> AdaptResult:
             log_fh.close()
         if raw_fh:
             raw_fh.close()
-        if stderr_fh:
-            stderr_fh.close()
 
     proc.wait(timeout=10)
 

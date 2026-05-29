@@ -13,17 +13,13 @@ Side-effects:
 """
 from __future__ import annotations
 
-import argparse
-import json
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-from main2main_flow.utils import WORKSPACE_DIR
 
-
-def extract_from_conf_py(ascend_path: Path) -> dict[str, str | None]:
+def _extract_from_conf_py(ascend_path: Path) -> dict[str, str | None]:
     """Parse conf.py for the pinned vLLM commit and compatibility tag."""
     conf_path = ascend_path / "docs" / "source" / "conf.py"
     if not conf_path.exists():
@@ -45,7 +41,7 @@ def extract_from_conf_py(ascend_path: Path) -> dict[str, str | None]:
     }
 
 
-def get_repo_head(repo_path: Path) -> str:
+def _get_repo_head(repo_path: Path) -> str:
     """Return the HEAD commit SHA of a local git repository."""
     if not repo_path.exists():
         print(f"Error: path does not exist: {repo_path}", file=sys.stderr)
@@ -70,8 +66,8 @@ def detect(
 
     Returns the detect result dict.
     """
-    conf = extract_from_conf_py(ascend_path)
-    target = target_commit if target_commit else get_repo_head(vllm_path)
+    conf = _extract_from_conf_py(ascend_path)
+    target = target_commit if target_commit else _get_repo_head(vllm_path)
 
     result = {
         "base_commit": conf["base_commit"],
@@ -79,27 +75,4 @@ def detect(
         "compat_tag": conf["compat_tag"],
     }
 
-    WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-    (WORKSPACE_DIR / "steps").mkdir(exist_ok=True)
-    (WORKSPACE_DIR / "detect.json").write_text(
-        json.dumps(result, indent=2) + "\n", encoding="utf-8"
-    )
-
     return result, conf["base_commit"] != target
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Detect base/target commits for main2main pipeline."
-    )
-    parser.add_argument("--vllm-path", type=Path, required=True)
-    parser.add_argument("--ascend-path", type=Path, required=True)
-    parser.add_argument("--target-commit", default=None, help="Target commit SHA (default: vllm HEAD)")
-    args = parser.parse_args()
-
-    result = detect(args.vllm_path, args.ascend_path, target_commit=args.target_commit)
-    print(json.dumps(result, indent=2))
-
-
-if __name__ == "__main__":
-    main()
