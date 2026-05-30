@@ -325,7 +325,6 @@ class Main2MainFlow(Flow[Main2MainState]):
         run_git(vllm_path, "checkout", self.state.original_vllm_ref)
         print(f"[generate_final_post] Restored vllm to '{self.state.original_vllm_ref}'.")
         run_git(ascend_path, "checkout", "-f", self.state.original_ascend_ref)
-        run_git(ascend_path, "clean", "-fd")
         print(f"[generate_final_post] Restored vllm-ascend to '{self.state.original_ascend_ref}'.")
 
     @listen(generate_final_post)

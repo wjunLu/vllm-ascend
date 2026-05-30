@@ -2,18 +2,21 @@
 """Push the main2main patch as a new branch and open a GitHub pull request.
 
 Steps:
-  1. Stash any uncommitted working-tree changes in the ascend repo.
-  2. Create a new local branch "update/main2main-<timestamp>" from the
+  1. Ensure gh CLI is authenticated (use GH_TOKEN in CI, or existing gh auth).
+  2. Configure git credential helper so git push uses the same token.
+  3. Create a new local branch "update/main2main-<timestamp>" from the
      current branch (which should be at the original base commit).
-  3. Apply the final_target.patch file with ``git apply``.
-  4. Commit the applied changes.
-  5. Push the branch to origin.
-  6. Open a PR via ``gh pr create``, using final_summary.md as the description.
-  7. Restore the original branch and pop the stash.
+  4. Apply the final_target.patch file with ``git apply``.
+  5. Commit the applied changes.
+  6. Push the branch to origin.
+  7. Open a PR via ``gh pr create``, using final_summary.md as the description.
+  8. Restore the original branch.
 
-Environment variables (all overridable by CLI flags):
+Environment variables:
   PUSH_TO_GITHUB  — must be "true" to do anything
   GITHUB_REPO     — target repo "owner/name" (required)
+  GH_TOKEN        — GitHub Personal Access Token (required in CI;
+                    also used by git push via credential helper)
 """
 from __future__ import annotations
 
@@ -35,6 +38,32 @@ def _detect_default_branch(repo: Path | str, remote: str = "origin") -> str:
         return ref.rsplit("/", 1)[-1]
     except subprocess.CalledProcessError:
         return "main"
+
+
+def _ensure_gh_auth(ascend_path: Path | str) -> None:
+    try:
+        subprocess.run(
+            ["gh", "auth", "status"],
+            check=True, capture_output=True, text=True,
+        )
+        print("[push] gh CLI already authenticated.")
+    except subprocess.CalledProcessError:
+        gh_token = os.getenv("GH_TOKEN", "")
+        if not gh_token:
+            print("[push] gh not authenticated and GH_TOKEN not set. "
+                  "Run 'gh auth login' locally or set GH_TOKEN in CI.",
+                  file=sys.stderr)
+            sys.exit(1)
+        print("[push] Authenticating gh CLI with GH_TOKEN...")
+        subprocess.run(
+            ["gh", "auth", "login",
+             "--with-token"],
+            input=gh_token, check=True, capture_output=True, text=True,
+        )
+        print("[push] gh CLI authenticated via GH_TOKEN.")
+
+    run_git(ascend_path, "config", "credential.helper", "!gh auth git-credential")
+    print("[push] Git credential helper set to 'gh auth git-credential'.")
 
 
 def push_and_create_pr(
@@ -68,17 +97,12 @@ def push_and_create_pr(
     patch_file = patch_file.resolve()
     print(f"[push] Applying patch: {patch_file}")
 
+    _ensure_gh_auth(ascend_path)
+
     original_branch = run_git(ascend_path, "branch", "--show-current").strip()
     was_detached = not original_branch
     if was_detached:
         original_branch = run_git(ascend_path, "rev-parse", "HEAD").strip()
-
-    stash_ref: str | None = None
-    diff_output = run_git(ascend_path, "diff", "--stat").strip()
-    if diff_output:
-        print("[push] Stashing uncommitted working-tree changes...")
-        run_git(ascend_path, "stash", "push", "-u", "-m", "main2main-auto-stash")
-        stash_ref = "stash@{0}"
 
     try:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -97,8 +121,6 @@ def push_and_create_pr(
         print(f"[push] Pushed branch '{branch}' to origin.")
 
         base_branch = _detect_default_branch(ascend_path)
-        if was_detached:
-            base_branch = _detect_default_branch(ascend_path)
 
         gh_cmd = [
             "gh", "pr", "create",
@@ -115,15 +137,8 @@ def push_and_create_pr(
         pr_url = result.stdout.strip()
         print(f"[push] PR created: {pr_url}")
     finally:
-        if was_detached:
-            run_git(ascend_path, "checkout", original_branch)
-        else:
-            run_git(ascend_path, "checkout", original_branch)
+        run_git(ascend_path, "checkout", original_branch)
         print(f"[push] Restored original branch '{original_branch}'.")
-
-        if stash_ref:
-            run_git(ascend_path, "stash", "pop", stash_ref)
-            print("[push] Restored stashed working-tree changes.")
 
     return pr_url
 
