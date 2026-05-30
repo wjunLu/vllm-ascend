@@ -29,6 +29,14 @@ from main2main_flow.utils import run_git
 DEFAULT_WORKSPACE_DIR = Path(__file__).parent.parent.parent.parent / "workspace"
 
 
+def _detect_default_branch(repo: Path | str, remote: str = "origin") -> str:
+    try:
+        ref = run_git(repo, "symbolic-ref", f"refs/remotes/{remote}/HEAD").strip()
+        return ref.rsplit("/", 1)[-1]
+    except subprocess.CalledProcessError:
+        return "main"
+
+
 def push_and_create_pr(
     ascend_path: Path,
     github_repo: str,
@@ -61,55 +69,61 @@ def push_and_create_pr(
     print(f"[push] Applying patch: {patch_file}")
 
     original_branch = run_git(ascend_path, "branch", "--show-current").strip()
-    if not original_branch:
-        original_branch = run_git(ascend_path, "rev-parse", "--short", "HEAD").strip()
+    was_detached = not original_branch
+    if was_detached:
+        original_branch = run_git(ascend_path, "rev-parse", "HEAD").strip()
 
-    has_stash = run_git(ascend_path, "stash", "list").strip() != ""
-    stash_ref = ""
-
+    stash_ref: str | None = None
     diff_output = run_git(ascend_path, "diff", "--stat").strip()
     if diff_output:
         print("[push] Stashing uncommitted working-tree changes...")
         run_git(ascend_path, "stash", "push", "-u", "-m", "main2main-auto-stash")
         stash_ref = "stash@{0}"
 
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    branch = f"update/main2main-{timestamp}"
-    run_git(ascend_path, "checkout", "-b", branch)
-    print(f"[push] Created branch '{branch}' from '{original_branch}'.")
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        branch = f"update/main2main-{timestamp}"
+        run_git(ascend_path, "checkout", "-b", branch)
+        print(f"[push] Created branch '{branch}' from '{original_branch}'.")
 
-    run_git(ascend_path, "apply", str(patch_file))
+        run_git(ascend_path, "apply", str(patch_file))
 
-    run_git(ascend_path, "add", "-A")
-    commit_msg = f"main2main: sync vllm upstream ({timestamp})"
-    run_git(ascend_path, "commit", "-s", "-m", commit_msg)
-    print(f"[push] Committed patch as '{commit_msg}'.")
+        run_git(ascend_path, "add", "-A")
+        commit_msg = f"main2main: sync vllm upstream ({timestamp})"
+        run_git(ascend_path, "commit", "-s", "-m", commit_msg)
+        print(f"[push] Committed patch as '{commit_msg}'.")
 
-    run_git(ascend_path, "push", "origin", branch)
-    print(f"[push] Pushed branch '{branch}' to origin.")
+        run_git(ascend_path, "push", "origin", branch)
+        print(f"[push] Pushed branch '{branch}' to origin.")
 
-    base_branch = original_branch if original_branch != branch else "main"
-    gh_cmd = [
-        "gh", "pr", "create",
-        "--title", commit_msg,
-        "--body", pr_description,
-        "--head", branch,
-        "--base", base_branch,
-        "--repo", github_repo,
-    ]
+        base_branch = _detect_default_branch(ascend_path)
+        if was_detached:
+            base_branch = _detect_default_branch(ascend_path)
 
-    result = subprocess.run(
-        gh_cmd, check=True, capture_output=True, text=True, cwd=str(ascend_path)
-    )
-    pr_url = result.stdout.strip()
-    print(f"[push] PR created: {pr_url}")
+        gh_cmd = [
+            "gh", "pr", "create",
+            "--title", commit_msg,
+            "--body", pr_description,
+            "--head", branch,
+            "--base", base_branch,
+            "--repo", github_repo,
+        ]
 
-    run_git(ascend_path, "checkout", original_branch)
-    print(f"[push] Restored original branch '{original_branch}'.")
+        result = subprocess.run(
+            gh_cmd, check=True, capture_output=True, text=True, cwd=str(ascend_path)
+        )
+        pr_url = result.stdout.strip()
+        print(f"[push] PR created: {pr_url}")
+    finally:
+        if was_detached:
+            run_git(ascend_path, "checkout", original_branch)
+        else:
+            run_git(ascend_path, "checkout", original_branch)
+        print(f"[push] Restored original branch '{original_branch}'.")
 
-    if stash_ref:
-        run_git(ascend_path, "stash", "pop")
-        print("[push] Restored stashed working-tree changes.")
+        if stash_ref:
+            run_git(ascend_path, "stash", "pop", stash_ref)
+            print("[push] Restored stashed working-tree changes.")
 
     return pr_url
 

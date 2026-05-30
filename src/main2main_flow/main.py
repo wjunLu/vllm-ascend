@@ -46,6 +46,9 @@ class Main2MainState(BaseModel):
     cur_ascend_commit: str = ""
     cur_patch_path: str = ""
 
+    original_vllm_ref: str = ""
+    original_ascend_ref: str = ""
+
     test_errors: list = []
     retry_count: int = 0
 
@@ -77,6 +80,11 @@ class Main2MainFlow(Flow[Main2MainState]):
         )
         if not self.state.test_log_dir:
             self.state.test_log_dir = str(WORKSPACE_DIR / "test-logs")
+
+        vllm_branch = run_git(self.state.vllm_path, "branch", "--show-current").strip()
+        self.state.original_vllm_ref = vllm_branch or run_git(self.state.vllm_path, "rev-parse", "HEAD").strip()
+        ascend_branch = run_git(self.state.vllm_ascend_path, "branch", "--show-current").strip()
+        self.state.original_ascend_ref = ascend_branch or run_git(self.state.vllm_ascend_path, "rev-parse", "HEAD").strip()
 
     @router(initialize)
     def analyze_commit_and_plan_step(self) -> Literal["HasCommit", "HasNoCommit"]:
@@ -311,6 +319,14 @@ class Main2MainFlow(Flow[Main2MainState]):
         if last_guide_path.exists():
             shutil.copy2(last_guide_path, WORKSPACE_DIR / FINAL_CODE_STRUCTURE_GUIDE_FILE)
             print(f"[generate_final_post] Copied code-structure-guide to workspace.")
+
+        vllm_path = self.state.vllm_path
+        ascend_path = self.state.vllm_ascend_path
+        run_git(vllm_path, "checkout", self.state.original_vllm_ref)
+        print(f"[generate_final_post] Restored vllm to '{self.state.original_vllm_ref}'.")
+        run_git(ascend_path, "checkout", "-f", self.state.original_ascend_ref)
+        run_git(ascend_path, "clean", "-fd")
+        print(f"[generate_final_post] Restored vllm-ascend to '{self.state.original_ascend_ref}'.")
 
     @listen(generate_final_post)
     def push_to_github(self):
