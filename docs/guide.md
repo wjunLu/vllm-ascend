@@ -493,7 +493,7 @@ workspace/
 
 ## AI Agent 参考文档
 
-AI agent 在分析和适配过程中会参考项目内置的参考文档，这些文档编码了 vllm-ascend 适配工作的领域知识，是 AI 分析质量的重要保障。文档位于 `src/main2main_flow/reference/`：
+AI agent 在分析和适配过程中会参考项目内置的参考文档，这些文档编码了 vllm-ascend 适配工作的领域知识，是 AI 分析质量的重要保障。文档位于 `src/reference/`：
 
 | 文件 | 主要内容 |
 |---|---|

@@ -33,13 +33,13 @@ covers how to install and run.
 pip install -e .
 ```
 
-This registers the `kickoff` console script. (`uv sync` also works if you use
-[`uv`](https://docs.astral.sh/uv/); the repo already ships a `uv.lock`.)
+(`uv sync` also works if you use [`uv`](https://docs.astral.sh/uv/); the repo
+already ships a `uv.lock`.)
 
 ## Run
 
 ```bash
-kickoff \
+python main.py \
   --vllm-path        /path/to/vllm \
   --vllm-ascend-path /path/to/vllm-ascend \
   [--target-commit   <40-char SHA>]
@@ -58,22 +58,22 @@ CLI flags can also be supplied via env vars: `VLLM_PATH`, `VLLM_ASCEND_PATH`,
 
 ```bash
 # Clone both repos from GitHub, target vllm HEAD
-kickoff \
+python main.py \
   --vllm-path        https://github.com/vllm-project/vllm.git \
   --vllm-ascend-path https://github.com/vllm-project/vllm-ascend.git
 
 # Dry-run plumbing: skip both opencode and NPU tests
-SKIP_AI_ANALYSIS=true SKIP_E2E_TEST=true kickoff \
+SKIP_AI_ANALYSIS=true SKIP_E2E_TEST=true python main.py \
   --vllm-path /path/to/vllm --vllm-ascend-path /path/to/vllm-ascend
 
 # Run e2e tests on a remote NPU box via SSH + docker exec
 MAIN2MAIN_REMOTE_HOST=root@10.0.0.10 \
 MAIN2MAIN_REMOTE_CONTAINER=vllm-ascend-ci \
-kickoff --vllm-path ... --vllm-ascend-path ...
+python main.py --vllm-path ... --vllm-ascend-path ...
 
 # Auto-push a branch and open a PR after a successful run
 PUSH_TO_GITHUB=true GITHUB_REPO=vllm-project/vllm-ascend \
-kickoff --vllm-path ... --vllm-ascend-path ...
+python main.py --vllm-path ... --vllm-ascend-path ...
 ```
 
 ### Environment variables
@@ -116,9 +116,9 @@ workspace/
 ## Project layout
 
 ```
-src/main2main_flow/
-├── flow.py              # CrewAI Flow: nodes, routing, retry loop
-├── main.py              # `kickoff` / `plot` CLI entrypoints
+main.py                    # CLI entrypoint
+src/
+├── flow.py              # Flow: nodes, routing, retry loop
 ├── utils.py             # filename constants + git helpers
 ├── agent/
 │   ├── opencode_adapter.py   # spawns `opencode run`, parses JSONL events

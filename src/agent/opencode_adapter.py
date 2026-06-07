@@ -16,18 +16,34 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 _PROMPT_PATH = Path(__file__).parent / "prompt.md"
+_REFERENCE_DIR = Path(__file__).parent.parent / "reference"
 
 _TIMEOUT_MINUTES = 30
 _STALE_SECONDS = 300
 _MAX_STALE_RETRIES = 3
 
-
-# ── prompt loader ─────────────────────────────────────────────────────────────
+# ── prompt builder ─────────────────────────────────────────────────────────────
 
 def _build_prompt(inputs: dict[str, Any]) -> str:
     template = _PROMPT_PATH.read_text(encoding="utf-8")
     ctx = {k: str(v) for k, v in inputs.items()}
+
+    mode = inputs.get("mode", "adapt")
+    code_structure = _load_ref("code-structure-guide.md")
+    if mode == "fix":
+        ref_content = _load_ref("diagnosis-guide.md") + "\n\n" + _load_ref("error-pattern-examples.md") + "\n\n" + code_structure
+    else:
+        ref_content = _load_ref("adapt-guide.md") + "\n\n" + code_structure
+
+    ctx["reference_content"] = ref_content
     return template.format_map(ctx)
+
+
+def _load_ref(filename: str) -> str:
+    path = _REFERENCE_DIR / filename
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    return ""
 
 
 def _build_continue_prompt(base_prompt: str, inputs: dict[str, Any], retry: int) -> str:

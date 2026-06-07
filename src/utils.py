@@ -7,7 +7,7 @@ UpgradeFailed = "UpgradeFailed"
 HasCommit = "HasCommit"
 HasNoCommit = "HasNoCommit"
 
-WORKSPACE_DIR = Path(__file__).parent.parent.parent / "workspace"
+WORKSPACE_DIR = Path(__file__).parent.parent / "workspace"
 DETECT_FILE = "detect.json"
 STEPS_FILE = "steps.json"
 STEPS_DIR = "steps"

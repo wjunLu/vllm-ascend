@@ -1,9 +1,10 @@
-#!/usr/bin/env python
+"""CLI entry-point for ``kickoff`` console script and ``python main.py``."""
 import argparse
 import json
 import sys
 from pathlib import Path
-from main2main_flow.flow import Main2MainFlow
+
+from flow import Main2MainFlow
 
 
 def kickoff():
@@ -30,7 +31,7 @@ def kickoff():
 
 def plot():
     import shutil
-    output_dir = Path(__file__).parent.parent.parent / "output"
+    output_dir = Path(__file__).resolve().parent.parent / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
     flow = Main2MainFlow()
     tmp_html = Path(flow.plot(filename="flow.html", show=False))
@@ -54,7 +55,3 @@ def run_with_trigger():
         return result
     except Exception as e:
         raise Exception(f"An error occurred while running the flow with trigger: {e}")
-
-
-if __name__ == "__main__":
-    kickoff()

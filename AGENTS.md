@@ -4,23 +4,23 @@ CrewAI Flow that automates vllm-ascend's main2main upgrade against upstream vLLM
 
 ## Run
 
-Install once: `pip install -e .` (registers `kickoff` console script).
+Install once: `pip install -e .`
 
-Real entrypoint is `Main2MainFlow` in `src/main2main_flow/flow.py`, NOT a top-level `main.py` — README's `python main.py` is wrong. Use:
+Real entrypoint is `Main2MainFlow` in `src/flow.py`. Run `python main.py` from repo root:
 
 ```bash
-kickoff --vllm-path <path|url> --vllm-ascend-path <path|url> [--target-commit SHA]
+python main.py --vllm-path <path|url> --vllm-ascend-path <path|url> [--target-commit SHA]
 ```
 
 Both repos must be real git checkouts (or HTTPS URLs that will be cloned into `workspace/repos/`). vllm HEAD is the implicit target unless `--target-commit` is given.
 
 ## Layout (only the non-obvious bits)
 
-- `src/main2main_flow/flow.py` — the Flow; node order: `initialize → analyze_commit_and_plan_step → process_steps → generate_final_post → push_to_github`. Routing uses string signals defined in `utils.py` (`HasCommit`, `HasNoCommit`, `UpgradeCompleted`, `UpgradeFailed`) — match them exactly.
-- `src/main2main_flow/scripts/` — deterministic helpers (`detect_commits`, `plan_steps`, `update_commit_reference`, `pre_ci_check`, `run_tests`, `push_to_github`). Import them, don't shell out.
-- `src/main2main_flow/agent/opencode_adapter.py` — spawns `opencode run --format json --dangerously-skip-permissions`, streams JSONL, 30 min total / 5 min stale timeouts, up to 3 stale retries with a continue-prompt.
-- `src/main2main_flow/agent/prompt.md` — single-agent prompt (do NOT use TeamCreate/Agent sub-tools); formatted with `str.format_map`, so any literal `{}` in this file must be escaped as `{{ }}`.
-- `src/main2main_flow/reference/` — adapt/diagnosis guides consumed by the agent. Update these when new error patterns appear; they are the durable knowledge base.
+- `src/flow.py` — the Flow; node order: `initialize → analyze_commit_and_plan_step → process_steps → generate_final_post → push_to_github`. Routing uses string signals defined in `utils.py` (`HasCommit`, `HasNoCommit`, `UpgradeCompleted`, `UpgradeFailed`) — match them exactly.
+- `src/scripts/` — deterministic helpers (`detect_commits`, `plan_steps`, `update_commit_reference`, `pre_ci_check`, `run_tests`, `push_to_github`). Import them, don't shell out.
+- `src/agent/opencode_adapter.py` — spawns `opencode run --format json --dangerously-skip-permissions`, streams JSONL, 30 min total / 5 min stale timeouts, up to 3 stale retries with a continue-prompt.
+- `src/agent/prompt.md` — single-agent prompt (do NOT use TeamCreate/Agent sub-tools); formatted with `str.format_map`, so any literal `{}` in this file must be escaped as `{{ }}`.
+- `src/reference/` — adapt/diagnosis guides consumed by the agent. Update these when new error patterns appear; they are the durable knowledge base.
 - `docs/guide.md` — authoritative long-form spec. When in doubt about behavior, trust `flow.py` + `utils.py` over README; `docs/guide.md` is mostly accurate but predates some filename renames (e.g. it mentions `step_summary.json`; current code uses `step_summary.md`, see `utils.EACH_STEP_SUMMARY_FILE`).
 
 ## workspace/ is volatile
@@ -57,7 +57,7 @@ Inside `_ai_analysis`, opencode itself is also called up to 3 times per step, ga
 
 ## Don'ts
 
-- Don't follow README literally — `python main.py` does not exist; use `kickoff`.
+- Run `python main.py` from repo root (it adds `src/` to sys.path automatically).
 - Don't keep `workspace/` paths between runs; they vanish on `initialize`.
 - Don't add `{var}` placeholders to `prompt.md` that aren't passed into `run_opencode_adapter`'s inputs dict, or `format_map` will KeyError.
 - Don't commit anything under `workspace/`, `output/`, `.venv/`, or `.env` (already gitignored).
