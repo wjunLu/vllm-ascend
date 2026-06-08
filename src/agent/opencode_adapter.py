@@ -6,6 +6,7 @@ All JSON events are printed to console and logged to step_dir.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import subprocess
 import threading
@@ -21,6 +22,7 @@ _REFERENCE_DIR = Path(__file__).parent.parent / "reference"
 _TIMEOUT_MINUTES = 30
 _STALE_SECONDS = 300
 _MAX_STALE_RETRIES = 3
+_DEFAULT_MODEL = os.environ.get("MAIN2MAIN_MODEL", "deepseek/deepseek-chat")
 
 # ── prompt builder ─────────────────────────────────────────────────────────────
 
@@ -161,6 +163,7 @@ def _run_once(
         [
             "opencode", "run",
             "--format", "json",
+            "--model", _DEFAULT_MODEL,
             "--dangerously-skip-permissions",
             prompt,
         ],
