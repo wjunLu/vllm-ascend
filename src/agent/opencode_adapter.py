@@ -29,8 +29,8 @@ _DEFAULT_MODEL = os.environ.get("MAIN2MAIN_MODEL", "deepseek/deepseek-chat")
 if not shutil.which("opencode"):
     raise SystemExit(
         "opencode CLI not found. Install it with:\n"
-        "  npm install -g @anthropic-ai/opencode\n"
-        "Or see https://github.com/anthropics/opencode"
+        "  curl -fsSL https://opencode.ai/install | bash\n"
+        "Or: npm install -g opencode-ai"
     )
 
 # ── prompt builder ─────────────────────────────────────────────────────────────
