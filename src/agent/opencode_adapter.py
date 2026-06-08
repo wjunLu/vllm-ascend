@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import time
@@ -23,6 +24,14 @@ _TIMEOUT_MINUTES = 30
 _STALE_SECONDS = 300
 _MAX_STALE_RETRIES = 3
 _DEFAULT_MODEL = os.environ.get("MAIN2MAIN_MODEL", "deepseek/deepseek-chat")
+
+# Verify opencode is available at import time
+if not shutil.which("opencode"):
+    raise SystemExit(
+        "opencode CLI not found. Install it with:\n"
+        "  npm install -g @anthropic-ai/opencode\n"
+        "Or see https://github.com/anthropics/opencode"
+    )
 
 # ── prompt builder ─────────────────────────────────────────────────────────────
 
