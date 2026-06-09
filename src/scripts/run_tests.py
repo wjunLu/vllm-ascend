@@ -242,12 +242,16 @@ def setup_env(vllm_path: Path, vllm_commit: str, ascend_path: Path,
     _pip_install(vllm_path, extra_env={"VLLM_TARGET_DEVICE": "empty"})
 
     if os.getenv("MAIN2MAIN_KEEP_BRANCH", "false").lower() == "true":
-        print("=== vllm-ascend: branch kept, only applying patch ===")
+        print("=== vllm-ascend: reset to upstream/main and apply patch ===")
+        _run_checked(["git", "fetch", "upstream", "--force"], ascend_path, "fetch upstream")
+        _run_checked(["git", "reset", "--hard", "upstream/main"], ascend_path, "reset to upstream/main")
         if patch_path:
             if not patch_path.exists():
                 print(f"Error: patch not found: {patch_path}", file=sys.stderr)
                 sys.exit(1)
             _run_checked(["git", "apply", str(patch_path)], ascend_path, f"git apply {patch_path.name}")
+        print("=== Install vllm-ascend requirements ===")
+        _pip_install(ascend_path, requirements="requirements-dev.txt", verbose=True, skip_editable=True)
     else:
         print("=== Setup vllm-ascend ===")
         _ensure_repo(ascend_path, ascend_remote)
