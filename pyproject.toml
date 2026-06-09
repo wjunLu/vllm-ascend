@@ -5,7 +5,8 @@ description = "main2main_flow using crewAI"
 authors = [{ name = "Your Name", email = "you@example.com" }]
 requires-python = ">=3.10,<3.14"
 dependencies = [
-    "crewai[tools]==1.14.5"
+    "crewai[tools]==1.14.5",
+    "pyyaml>=6.0"
 ]
 
 [project.scripts]

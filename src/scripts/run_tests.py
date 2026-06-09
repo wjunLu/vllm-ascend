@@ -392,6 +392,21 @@ def _classify(exit_code: int, summary: dict | None, error: str | None) -> str:
     return "failed"
 
 
+def _discover_test_files(ascend_path: Path, paths: list[str]) -> list[str]:
+    """Expand directories into individual test_*.py files."""
+    result: list[str] = []
+    for p in paths:
+        full = (ascend_path / p).resolve() if not os.path.isabs(p) else Path(p).resolve()
+        if full.is_file():
+            result.append(str(full.relative_to(ascend_path)))
+        elif full.is_dir():
+            for tf in sorted(full.rglob("test_*.py")):
+                result.append(str(tf.relative_to(ascend_path)))
+        else:
+            print(f"  [warn] Test path not found: {p}", flush=True)
+    return result
+
+
 def _select_tests_by_files(ascend_path: Path, changed_files: list[str]) -> list[str] | None:
     """Call vllm-ascend's select_tests.py to resolve changed files → test files.
 
@@ -406,8 +421,11 @@ def _select_tests_by_files(ascend_path: Path, changed_files: list[str]) -> list[
         [sys.executable, str(select_script), "--changed-files"] + changed_files,
         cwd=ascend_path, capture_output=True, text=True,
     )
+    if r.stderr.strip():
+        for line in r.stderr.strip().splitlines():
+            print(f"  [select_tests] {line}", flush=True)
     if r.returncode != 0:
-        print(f"  [warn] select_tests.py failed:\n{r.stderr}", flush=True)
+        print(f"  [warn] select_tests.py failed (exit {r.returncode})", flush=True)
         return None
 
     # Parse key=value output (GITHUB_OUTPUT format)
@@ -536,6 +554,9 @@ def run_tests(
         print(f"Selecting tests for {len(select_by_files)} changed file(s)")
         test_files = _select_tests_by_files(ascend_path, select_by_files) or []
         print(f"Selected {len(test_files)} test(s)")
+        if not test_files:
+            print("Falling back to full pull_request test suite")
+            test_files = _discover_test_files(ascend_path, ["tests/e2e/pull_request"])
     else:
         test_files = []
 
