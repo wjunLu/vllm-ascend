@@ -250,8 +250,13 @@ def setup_env(vllm_path: Path, vllm_commit: str, ascend_path: Path,
                 print(f"Error: patch not found: {patch_path}", file=sys.stderr)
                 sys.exit(1)
             _run_checked(["git", "apply", str(patch_path)], ascend_path, f"git apply {patch_path.name}")
-        print("=== Install vllm-ascend requirements ===")
+        # Reinstall to restore compiled .so files wiped by git reset
+        print("=== Reinstall vllm-ascend ===")
         _pip_install(ascend_path, requirements="requirements-dev.txt", verbose=True, skip_editable=True)
+        so_files = list((ascend_path / "vllm_ascend").glob("*.so"))
+        if so_files:
+            print("  Cached .so files found, skipping csrc recompile")
+        _pip_install(ascend_path, extra_env={"COMPILE_CUSTOM_KERNELS": "0"} if so_files else {})
     else:
         print("=== Setup vllm-ascend ===")
         _ensure_repo(ascend_path, ascend_remote)
@@ -683,12 +688,20 @@ def run_tests(
                 print(f"  [{test}] started ({_test_cards(test)} card(s))", flush=True)
 
             round_results = []
+            printed_failure = False
             for fut in concurrent.futures.as_completed(futs):
                 r = fut.result()
                 round_results.append(r)
                 print(f"  [{futs[fut]}] done: exit={r['run_suite_exit_code']}, "
                       f"result={r['ci_result']}, bugs={r['code_bugs_count']}, "
                       f"flakes={r['env_flakes_count']}", flush=True)
+                if not printed_failure and r['run_suite_exit_code'] != 0:
+                    printed_failure = True
+                    log_path = Path(r['log_path'])
+                    if log_path.exists():
+                        log_content = log_path.read_text(encoding="utf-8", errors="replace")
+                        tail = "\n".join(log_content.splitlines()[-40:])
+                        print(f"  [FAILED] log tail ({r['test']}):\n{tail}", flush=True)
 
         round_elapsed = time.monotonic() - round_t0
         all_results.extend(round_results)
