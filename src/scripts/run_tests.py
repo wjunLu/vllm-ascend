@@ -241,18 +241,26 @@ def setup_env(vllm_path: Path, vllm_commit: str, ascend_path: Path,
     print("=== Install vLLM ===")
     _pip_install(vllm_path, extra_env={"VLLM_TARGET_DEVICE": "empty"})
 
-    print("=== Setup vllm-ascend ===")
-    _ensure_repo(ascend_path, ascend_remote)
-    _run_checked(["git", "fetch", "origin", "--force"], ascend_path, "fetch origin")
-    _run_checked(["git", "reset", "--hard", "origin/main"], ascend_path, "reset to origin/main")
-    _run_checked(["git", "checkout", ascend_commit], ascend_path, f"checkout {ascend_commit[:8]}")
-    if patch_path:
-        if not patch_path.exists():
-            print(f"Error: patch not found: {patch_path}", file=sys.stderr)
-            sys.exit(1)
-        _run_checked(["git", "apply", str(patch_path)], ascend_path, f"git apply {patch_path.name}")
-    print("=== Install vllm-ascend ===")
-    _pip_install(ascend_path, requirements="requirements-dev.txt", verbose=True, skip_editable=True)
+    if os.getenv("MAIN2MAIN_KEEP_BRANCH", "false").lower() == "true":
+        print("=== vllm-ascend: branch kept, only applying patch ===")
+        if patch_path:
+            if not patch_path.exists():
+                print(f"Error: patch not found: {patch_path}", file=sys.stderr)
+                sys.exit(1)
+            _run_checked(["git", "apply", str(patch_path)], ascend_path, f"git apply {patch_path.name}")
+    else:
+        print("=== Setup vllm-ascend ===")
+        _ensure_repo(ascend_path, ascend_remote)
+        _run_checked(["git", "fetch", "origin", "--force"], ascend_path, "fetch origin")
+        _run_checked(["git", "reset", "--hard", "origin/main"], ascend_path, "reset to origin/main")
+        _run_checked(["git", "checkout", ascend_commit], ascend_path, f"checkout {ascend_commit[:8]}")
+        if patch_path:
+            if not patch_path.exists():
+                print(f"Error: patch not found: {patch_path}", file=sys.stderr)
+                sys.exit(1)
+            _run_checked(["git", "apply", str(patch_path)], ascend_path, f"git apply {patch_path.name}")
+        print("=== Install vllm-ascend ===")
+        _pip_install(ascend_path, requirements="requirements-dev.txt", verbose=True, skip_editable=True)
     print(f"\nSetup complete.\n  vLLM: {vllm_path} @ {vllm_commit[:8]}\n"
           f"  vllm-ascend: {ascend_path} @ {ascend_commit[:8]}"
           + (f" + {patch_path.name}" if patch_path else ""))
@@ -446,6 +454,8 @@ def _select_tests_by_files(ascend_path: Path, changed_files: list[str]) -> list[
 
     tests: list[str] = []
     for g in groups:
+        if g.get("npu_type") == "cpu":
+            continue  # skip CPU-only tests, main2main runs on NPU
         for t in g.get("tests", "").split():
             tests.append(t)
     return tests or None
