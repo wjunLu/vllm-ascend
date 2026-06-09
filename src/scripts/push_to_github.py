@@ -133,7 +133,7 @@ def push_and_create_pr(
         return ""
 
     try:
-        if has_patch:
+        if has_patch and not (os.getenv("MAIN2MAIN_KEEP_BRANCH") == "true" and not is_detached):
             # Apply-patch mode: create fresh branch from current commit
             ts = datetime.now().strftime("%Y%m%d-%H%M%S")
             branch = branch_name or f"update/main2main-{ts}"
