@@ -420,6 +420,7 @@ def _select_tests_by_files(ascend_path: Path, changed_files: list[str]) -> list[
     r = subprocess.run(
         [sys.executable, str(select_script), "--changed-files"] + changed_files,
         cwd=ascend_path, capture_output=True, text=True,
+        env={**os.environ, "GITHUB_OUTPUT": ""},  # force stdout output
     )
     if r.stderr.strip():
         for line in r.stderr.strip().splitlines():
@@ -554,9 +555,6 @@ def run_tests(
         print(f"Selecting tests for {len(select_by_files)} changed file(s)")
         test_files = _select_tests_by_files(ascend_path, select_by_files) or []
         print(f"Selected {len(test_files)} test(s)")
-        if not test_files:
-            print("Falling back to full pull_request test suite")
-            test_files = _discover_test_files(ascend_path, ["tests/e2e/pull_request"])
     else:
         test_files = []
 
