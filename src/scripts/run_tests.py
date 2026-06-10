@@ -244,19 +244,13 @@ def setup_env(vllm_path: Path, vllm_commit: str, ascend_path: Path,
     if os.getenv("MAIN2MAIN_KEEP_BRANCH", "false").lower() == "true":
         print("=== vllm-ascend: reset to upstream/main and apply patch ===")
         _run_checked(["git", "fetch", "upstream", "--force"], ascend_path, "fetch upstream")
-        _run_checked(["git", "reset", "--hard", "upstream/main"], ascend_path, "reset to upstream/main")
+        # checkout only tracked files, leaves compiled .so intact
+        _run_checked(["git", "checkout", "upstream/main", "--", "."], ascend_path, "checkout upstream/main")
         if patch_path:
             if not patch_path.exists():
                 print(f"Error: patch not found: {patch_path}", file=sys.stderr)
                 sys.exit(1)
             _run_checked(["git", "apply", str(patch_path)], ascend_path, f"git apply {patch_path.name}")
-        # Reinstall to restore compiled .so files wiped by git reset
-        print("=== Reinstall vllm-ascend ===")
-        _pip_install(ascend_path, requirements="requirements-dev.txt", verbose=True, skip_editable=True)
-        so_files = list((ascend_path / "vllm_ascend").glob("*.so"))
-        if so_files:
-            print("  Cached .so files found, skipping csrc recompile")
-        _pip_install(ascend_path, extra_env={"COMPILE_CUSTOM_KERNELS": "0"} if so_files else {})
     else:
         print("=== Setup vllm-ascend ===")
         _ensure_repo(ascend_path, ascend_remote)
