@@ -21,23 +21,30 @@ from utils import run_git
 
 
 def _extract_from_conf_py(ascend_path: Path) -> dict[str, str | None]:
-    """Parse conf.py for the pinned vLLM commit and compatibility tag."""
+    """Parse the pinned vLLM commit and compatibility tag.
+
+    Tries the verified-commit file first (new format), then falls back to
+    the hardcoded SHA in conf.py (old format).
+    """
+    verified_path = ascend_path / ".github" / "vllm-main-verified.commit"
+    if verified_path.exists():
+        base_commit = verified_path.read_text(encoding="utf-8").strip()
+    else:
+        conf_path = ascend_path / "docs" / "source" / "conf.py"
+        if not conf_path.exists():
+            print(f"Error: {conf_path} not found", file=sys.stderr)
+            sys.exit(1)
+        conf_text = conf_path.read_text(encoding="utf-8")
+        commit_match = re.search(r'"main_vllm_commit":\s*"([0-9a-f]{40})"', conf_text)
+        if not commit_match:
+            print("Error: could not find main_vllm_commit in conf.py", file=sys.stderr)
+            sys.exit(1)
+        base_commit = commit_match.group(1)
+
     conf_path = ascend_path / "docs" / "source" / "conf.py"
-    if not conf_path.exists():
-        print(f"Error: {conf_path} not found", file=sys.stderr)
-        sys.exit(1)
-
-    conf_text = conf_path.read_text(encoding="utf-8")
-
-    commit_match = re.search(r'"main_vllm_commit":\s*"([0-9a-f]{40})"', conf_text)
-    tag_match = re.search(r'"main_vllm_tag":\s*"([^"]+)"', conf_text)
-
-    if not commit_match:
-        print("Error: could not find main_vllm_commit in conf.py", file=sys.stderr)
-        sys.exit(1)
-
+    tag_match = re.search(r'"main_vllm_tag":\s*"([^"]+)"', conf_path.read_text(encoding="utf-8"))
     return {
-        "base_commit": commit_match.group(1),
+        "base_commit": base_commit,
         "compat_tag": tag_match.group(1) if tag_match else None,
     }
 
