@@ -360,8 +360,13 @@ def _run_to_log(command: list[str], cwd: Path, log_path: Path,
                 env: dict[str, str]) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as f:
-        return subprocess.Popen(command, cwd=cwd, env=env, stdout=f,
-                                stderr=subprocess.STDOUT).wait()
+        proc = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, bufsize=1)
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            f.write(line)
+            print(line, end="", flush=True)
+        return proc.wait()
 
 
 def _run_summary(ci_log_summary: Path, log_path: Path, summary_path: Path,
