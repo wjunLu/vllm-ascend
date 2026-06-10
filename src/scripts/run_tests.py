@@ -548,6 +548,7 @@ def run_tests(
     patch_path: str | Path | None = None,
     step_id: int = 0,
     select_by_files: list[str] | None = None,
+    test_cases: list[str] | None = None,
     remote: str | None = None,
     log_dir: str | Path = "",
     remote_log_dir: str | Path | None = None,
@@ -574,8 +575,11 @@ def run_tests(
     remote_vllm = Path(remote_vllm_path) if remote_vllm_path else Path("/vllm-workspace/vllm")
     remote_ascend = Path(remote_ascend_path) if remote_ascend_path else Path("/vllm-workspace/vllm-ascend")
 
-    # ---- step 1: resolve tests via vllm-ascend's select_tests.py ----
-    if select_by_files:
+    # ---- step 1: resolve tests ----
+    if test_cases:
+        test_files = test_cases
+        print(f"Using {len(test_files)} fixed test cases")
+    elif select_by_files:
         print(f"Selecting tests for {len(select_by_files)} changed file(s)")
         test_files = _select_tests_by_files(ascend_path, select_by_files) or []
         print(f"Selected {len(test_files)} test(s)")

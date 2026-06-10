@@ -27,6 +27,13 @@ from utils import (
 _REFERENCE_DIR = str(Path(__file__).parent / "reference")
 
 
+def _parse_test_cases_env() -> list[str] | None:
+    val = os.getenv("MAIN2MAIN_TEST_CASES", "").strip()
+    if not val:
+        return None
+    return [t.strip() for t in val.replace("\n", " ").split() if t.strip()]
+
+
 class Main2MainState(BaseModel):
     vllm_path: str = ""
     vllm_ascend_path: str = ""
@@ -282,6 +289,7 @@ class Main2MainFlow(Flow[Main2MainState]):
             patch_path=self.state.cur_patch_path or None,
             step_id=step_id,
             select_by_files=self.state.changed_files or None,
+            test_cases=_parse_test_cases_env(),
             remote=os.getenv("MAIN2MAIN_RUN_TESTS_REMOTE") or None,
             round_number=self.state.retry_count,
             log_dir=str(WORKSPACE_DIR / STEPS_DIR),
