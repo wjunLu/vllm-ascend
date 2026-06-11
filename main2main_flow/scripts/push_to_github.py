@@ -49,17 +49,6 @@ def _detect_default_branch(repo: Path | str, remote: str = "origin") -> str:
 
 
 def _ensure_gh_auth(ascend_path: Path | str) -> None:
-    gh_token = os.getenv("GH_TOKEN", "")
-    if not gh_token:
-        print("[push] GH_TOKEN not set, using default gh auth.", file=sys.stderr)
-    else:
-        print("[push] Authenticating gh CLI with GH_TOKEN...")
-        subprocess.run(
-            ["gh", "auth", "login", "--with-token"],
-            input=gh_token, check=True, capture_output=True, text=True,
-        )
-        print("[push] gh CLI authenticated via GH_TOKEN.")
-
     run_git(ascend_path, "config", "credential.helper", "!gh auth git-credential")
     print("[push] Git credential helper set to 'gh auth git-credential'.")
 
