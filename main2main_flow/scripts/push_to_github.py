@@ -49,23 +49,13 @@ def _detect_default_branch(repo: Path | str, remote: str = "origin") -> str:
 
 
 def _ensure_gh_auth(ascend_path: Path | str) -> None:
-    try:
-        subprocess.run(
-            ["gh", "auth", "status"],
-            check=True, capture_output=True, text=True,
-        )
-        print("[push] gh CLI already authenticated.")
-    except subprocess.CalledProcessError:
-        gh_token = os.getenv("GH_TOKEN", "")
-        if not gh_token:
-            print("[push] gh not authenticated and GH_TOKEN not set. "
-                  "Run 'gh auth login' locally or set GH_TOKEN in CI.",
-                  file=sys.stderr)
-            sys.exit(1)
+    gh_token = os.getenv("GH_TOKEN", "")
+    if not gh_token:
+        print("[push] GH_TOKEN not set, using default gh auth.", file=sys.stderr)
+    else:
         print("[push] Authenticating gh CLI with GH_TOKEN...")
         subprocess.run(
-            ["gh", "auth", "login",
-             "--with-token"],
+            ["gh", "auth", "login", "--with-token"],
             input=gh_token, check=True, capture_output=True, text=True,
         )
         print("[push] gh CLI authenticated via GH_TOKEN.")
