@@ -1,0 +1,64 @@
+name: Test Push
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test-push:
+    runs-on: ubuntu-latest
+    env:
+      PUSH_TO_GITHUB: 'true'
+      GITHUB_REPO: wjunLu/main2main_flow
+      HEAD_FORK: wjunLu/main2main_flow
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - run: |
+          git config user.name "test-bot"
+          git config user.email "test@bot.com"
+          echo "${{ secrets.PAT_TOKEN }}" | gh auth login --with-token
+          gh auth status
+          gh auth token > /dev/null 2>&1 && echo "token OK" || echo "token FAIL"
+
+      - run: |
+          BRANCH="test-push-$(date +%s)"
+          git checkout -b "$BRANCH"
+          echo "test $(date)" >> test.txt
+          git add test.txt
+          git commit -m "test push"
+          echo "PR_BRANCH_NAME=$BRANCH" >> "$GITHUB_ENV"
+          echo "branch: $BRANCH"
+
+      - run: pip install -e .
+
+      - name: Test push
+        run: |
+          python3 -c "
+import os, subprocess, sys
+sys.path.insert(0, '.')
+from main2main_flow.utils import run_git
+from main2main_flow.scripts.push_to_github import push_and_create_pr
+from pathlib import Path
+
+pr_url = push_and_create_pr(
+    ascend_path=Path('.'),
+    github_repo=os.getenv('GITHUB_REPO', ''),
+    summary_path=None,
+    old_commit='',
+    new_commit='',
+    head_fork=os.getenv('HEAD_FORK', ''),
+    draft=False,
+    branch_name=os.getenv('PR_BRANCH_NAME', ''),
+)
+print(f'PR_URL={pr_url}')
+if pr_url:
+    print('SUCCESS')
+else:
+    print('FAILED')
+    sys.exit(1)
+"

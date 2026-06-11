@@ -40,6 +40,14 @@ DEFAULT_WORKSPACE_DIR = Path(__file__).parent.parent.parent / "workspace"
 _PR_URL_FILE = "/tmp/main2main/pr_url.txt"
 
 
+def _gh_token() -> str:
+    try:
+        r = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, check=True)
+        return r.stdout.strip()
+    except subprocess.CalledProcessError:
+        return ""
+
+
 def _detect_default_branch(repo: Path | str, remote: str = "origin") -> str:
     try:
         ref = run_git(repo, "symbolic-ref", f"refs/remotes/{remote}/HEAD").strip()
@@ -135,10 +143,10 @@ def push_and_create_pr(
         # ---- push ----
         if head_fork:
             fork_url = f"https://github.com/{head_fork}.git"
-            token = os.getenv("GH_TOKEN", "")
+            token = os.getenv("GH_TOKEN", "") or _gh_token()
             fork_remote = f"https://{token}@github.com/{head_fork}.git" if token else fork_url
             print(f"[push] Pushing to fork: {fork_url}")
-            run_git(ascend_path, "push", "--force-with-lease", fork_remote, branch)
+            run_git(ascend_path, "-c", "credential.helper=", "push", "--force-with-lease", fork_remote, branch)
             head_ref = f"{head_fork.split('/')[0]}:{branch}"
         else:
             run_git(ascend_path, "push", "origin", branch)
