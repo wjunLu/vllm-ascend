@@ -311,6 +311,15 @@ class Main2MainFlow(Flow[Main2MainState]):
         # concatenating available step summaries if the last one is missing.
         if self.state.current_step == 0:
             print(f"[generate_final_post] fail to upgrade, no step success")
+            (WORKSPACE_DIR / FINAL_SUMMARY_FILE).write_text(
+                "main2main adaptation failed — no steps completed.\n", encoding="utf-8"
+            )
+            (WORKSPACE_DIR / "final_status.json").write_text(
+                json.dumps({"status": "failed", "steps_completed": 0, "steps_total": self.state.total_steps,
+                            "reached_commit": "", "old_commit": self.state.base_commit,
+                            "new_commit": self.state.target_commit or ""}, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8"
+            )
             return
 
         last_step = self.state.steps[self.state.current_step - 1]
@@ -343,6 +352,15 @@ class Main2MainFlow(Flow[Main2MainState]):
         (WORKSPACE_DIR / "final_status.json").write_text(
             json.dumps(status_json, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
+
+        # Ensure final_summary.md is non-empty (stub for dry runs)
+        final = WORKSPACE_DIR / FINAL_SUMMARY_FILE
+        if not final.exists() or final.stat().st_size == 0:
+            final.write_text(
+                f"main2main completed: {self.state.final_status}\n"
+                f"Steps: {self.state.current_step}/{self.state.total_steps}\n",
+                encoding="utf-8"
+            )
 
         last_guide_path = step_dir / EACH_STEP_CODE_STRUCTURE_GUIDE_FILE
         if last_guide_path.exists():
