@@ -338,7 +338,9 @@ class Main2MainFlow(Flow[Main2MainState]):
                     summaries.append(summary_path.read_text(encoding="utf-8"))
             final_summary_path.write_text("\n\n".join(summaries), encoding="utf-8")
 
-        shutil.copy2(step_dir / EACH_STEP_TARGET_PATCH_FILE, WORKSPACE_DIR / FINAL_TARGET_PATCH_FILE)
+        step_patch = step_dir / EACH_STEP_TARGET_PATCH_FILE
+        if step_patch.exists():
+            shutil.copy2(step_patch, WORKSPACE_DIR / FINAL_TARGET_PATCH_FILE)
 
         status = "completed" if self.state.final_status == UpgradeCompleted else "failed"
         status_json = {
