@@ -33,8 +33,8 @@ jobs:
 
       - name: Test push
         env:
-          GITHUB_REPO: wjunLu/main2main_flow
-          HEAD_FORK: wjunLu/main2main_flow
+          GITHUB_REPO: wjunLu/vllm-ascend
+          HEAD_FORK: wjunLu/vllm-ascend
           PUSH_TO_GITHUB: 'true'
           PR_DRAFT: 'false'
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
