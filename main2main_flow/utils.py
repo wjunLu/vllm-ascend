@@ -27,10 +27,13 @@ def run_git(repo: Path | str, *args: str) -> str:
     result = subprocess.run(
         ["git", *args],
         cwd=str(repo),
-        check=True,
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        cmd = " ".join(args)
+        print(f"[git] FAILED: git {cmd}\n{result.stderr.strip()}", flush=True)
+        result.check_returncode()
     return result.stdout
 
 
