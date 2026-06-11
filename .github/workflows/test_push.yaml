@@ -14,12 +14,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup git and gh auth
+      - name: Setup git
         run: |
           git config user.name "test-bot"
           git config user.email "test@bot.com"
-          echo "${{ secrets.PAT_TOKEN }}" | gh auth login --with-token
-          gh auth status
 
       - name: Create test branch
         run: |
@@ -39,6 +37,7 @@ jobs:
           HEAD_FORK: wjunLu/main2main_flow
           PUSH_TO_GITHUB: 'true'
           PR_DRAFT: 'false'
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           cat > /tmp/test_push.py << 'PYEOF'
           import os
