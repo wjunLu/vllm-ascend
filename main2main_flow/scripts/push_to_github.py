@@ -134,8 +134,10 @@ def push_and_create_pr(
 
         # ---- push ----
         if head_fork:
-            fork_remote = f"https://github.com/{head_fork}.git"
-            print(f"[push] Pushing to fork: {fork_remote}")
+            fork_url = f"https://github.com/{head_fork}.git"
+            token = os.getenv("GH_TOKEN", "")
+            fork_remote = f"https://{token}@github.com/{head_fork}.git" if token else fork_url
+            print(f"[push] Pushing to fork: {fork_url}")
             run_git(ascend_path, "push", "--force-with-lease", fork_remote, branch)
             head_ref = f"{head_fork.split('/')[0]}:{branch}"
         else:
