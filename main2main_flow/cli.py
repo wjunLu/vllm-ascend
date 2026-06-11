@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from flow import Main2MainFlow
+from main2main_flow.flow import Main2MainFlow
 
 
 def kickoff():

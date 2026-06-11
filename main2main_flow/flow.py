@@ -9,14 +9,14 @@ from pydantic import BaseModel
 
 from crewai.flow import Flow, listen, start, router
 
-from agent.opencode_adapter import AdaptResult, run_opencode_adapter
-from scripts.detect_commits import detect
-from scripts.plan_steps import run_plan
-from scripts.pre_ci_check import run_check
-from scripts.push_to_github import push_and_create_pr
-from scripts.run_tests import run_tests
-from scripts.update_commit_reference import run_update
-from utils import (
+from main2main_flow.agent.opencode_adapter import AdaptResult, run_opencode_adapter
+from main2main_flow.scripts.detect_commits import detect
+from main2main_flow.scripts.plan_steps import run_plan
+from main2main_flow.scripts.pre_ci_check import run_check
+from main2main_flow.scripts.push_to_github import push_and_create_pr
+from main2main_flow.scripts.run_tests import run_tests
+from main2main_flow.scripts.update_commit_reference import run_update
+from main2main_flow.utils import (
     UpgradeCompleted, UpgradeFailed,
     HasCommit, HasNoCommit, resolve_path, WORKSPACE_DIR, DETECT_FILE, STEPS_FILE, FINAL_SUMMARY_FILE, FINAL_TARGET_PATCH_FILE,
     STEPS_DIR, VLLM_GIT_PATCH_FILE, VLLM_GIT_CHANGED_FILES, PRE_CI_CHECK_FILE,

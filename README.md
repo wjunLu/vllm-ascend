@@ -39,7 +39,7 @@ already ships a `uv.lock`.)
 ## Run
 
 ```bash
-python main.py \
+kickoff \
   --vllm-path        /path/to/vllm \
   --vllm-ascend-path /path/to/vllm-ascend \
   [--target-commit   <40-char SHA>]
@@ -58,22 +58,22 @@ CLI flags can also be supplied via env vars: `VLLM_PATH`, `VLLM_ASCEND_PATH`,
 
 ```bash
 # Clone both repos from GitHub, target vllm HEAD
-python main.py \
+kickoff \
   --vllm-path        https://github.com/vllm-project/vllm.git \
   --vllm-ascend-path https://github.com/vllm-project/vllm-ascend.git
 
 # Dry-run plumbing: skip both opencode and NPU tests
-SKIP_AI_ANALYSIS=true SKIP_E2E_TEST=true python main.py \
+SKIP_AI_ANALYSIS=true SKIP_E2E_TEST=true kickoff \
   --vllm-path /path/to/vllm --vllm-ascend-path /path/to/vllm-ascend
 
 # Run e2e tests on a remote NPU box via SSH + docker exec
 MAIN2MAIN_REMOTE_HOST=root@10.0.0.10 \
 MAIN2MAIN_REMOTE_CONTAINER=vllm-ascend-ci \
-python main.py --vllm-path ... --vllm-ascend-path ...
+kickoff --vllm-path ... --vllm-ascend-path ...
 
 # Auto-push a branch and open a PR after a successful run
 PUSH_TO_GITHUB=true GITHUB_REPO=vllm-project/vllm-ascend \
-python main.py --vllm-path ... --vllm-ascend-path ...
+kickoff --vllm-path ... --vllm-ascend-path ...
 ```
 
 ### Environment variables
@@ -116,24 +116,26 @@ workspace/
 ## Project layout
 
 ```
-main.py                    # CLI entrypoint
-src/
-├── flow.py              # Flow: nodes, routing, retry loop
-├── utils.py             # filename constants + git helpers
+main.py                               # convenience entry point
+main2main_flow/
+├── cli.py                            # CLI (kickoff, plot, etc.)
+├── flow.py                           # Flow: nodes, routing, retry loop
+├── utils.py                          # filename constants + git helpers
 ├── agent/
-│   ├── opencode_adapter.py   # spawns `opencode run`, parses JSONL events
-│   └── prompt.md             # single-agent task prompt
-├── reference/           # knowledge base the agent reads at runtime
+│   ├── opencode_adapter.py           # spawns `opencode run`, parses JSONL events
+│   └── prompt.md                     # single-agent task prompt
+├── reference/                        # knowledge base the agent reads at runtime
 │   ├── adapt-guide.md
 │   ├── code-structure-guide.md
 │   ├── diagnosis-guide.md
 │   └── error-pattern-examples.md
-└── scripts/             # deterministic helpers (no AI)
+└── scripts/                          # deterministic helpers (no AI)
     ├── detect_commits.py
     ├── plan_steps.py
     ├── update_commit_reference.py
     ├── pre_ci_check.py
     ├── run_tests.py
+    ├── ci_log_summary.py
     └── push_to_github.py
 ```
 

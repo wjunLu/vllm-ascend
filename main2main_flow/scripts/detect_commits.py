@@ -17,7 +17,7 @@ import re
 import sys
 from pathlib import Path
 
-from utils import run_git
+from main2main_flow.utils import run_git
 
 
 def _extract_from_conf_py(ascend_path: Path) -> dict[str, str | None]:

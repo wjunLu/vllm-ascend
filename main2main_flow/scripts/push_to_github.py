@@ -34,7 +34,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from utils import run_git
+from main2main_flow.utils import run_git
 
 DEFAULT_WORKSPACE_DIR = Path(__file__).parent.parent.parent / "workspace"
 _PR_URL_FILE = "/tmp/main2main/pr_url.txt"

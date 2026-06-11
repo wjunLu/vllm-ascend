@@ -18,7 +18,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from utils import run_git
+from main2main_flow.utils import run_git
 
 _TEMP_PATTERNS = [
     ".log",

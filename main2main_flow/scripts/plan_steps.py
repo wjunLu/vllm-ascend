@@ -21,7 +21,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from utils import run_git
+from main2main_flow.utils import run_git
 
 LINE_BUDGET = 1000
 BASE_LINE_BUDGET = 1000
