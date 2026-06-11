@@ -169,8 +169,12 @@ def push_and_create_pr(
             gh_cmd.append("--draft")
 
         result = subprocess.run(
-            gh_cmd, check=True, capture_output=True, text=True, cwd=str(ascend_path)
+            gh_cmd, capture_output=True, text=True, cwd=str(ascend_path),
+            env={**os.environ, "GH_TOKEN": os.getenv("GH_TOKEN", "")},
         )
+        if result.returncode != 0:
+            print(f"[push] PR create FAILED: {result.stderr.strip()}", flush=True)
+            result.check_returncode()
         pr_url = result.stdout.strip()
         print(f"[push] PR created: {pr_url}")
 
