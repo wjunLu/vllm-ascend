@@ -161,10 +161,15 @@ def _sync_remote_dir(host: str, remote_dir: str, local_dir: Path) -> bool:
 # =============================================================================
 
 def _detect_cards(run_cmd) -> tuple[int, str]:
+    visible = os.environ.get("ASCEND_RT_VISIBLE_DEVICES", "")
+    if visible:
+        ids = [s.strip() for s in visible.split(",") if s.strip().isdigit()]
+        if ids:
+            return len(ids), ",".join(ids)
     result = run_cmd(
         "ls /dev/davinci[0-9]* 2>/dev/null | sed 's/.*davinci//' | sort -n"
     )
-    ids: list[str] = []
+    ids = []
     for token in result.stdout.strip().split():
         try:
             ids.append(str(int(token)))
@@ -242,15 +247,7 @@ def setup_env(vllm_path: Path, vllm_commit: str, ascend_path: Path,
     _pip_install(vllm_path, extra_env={"VLLM_TARGET_DEVICE": "empty"})
 
     if os.getenv("MAIN2MAIN_KEEP_BRANCH", "false").lower() == "true":
-        print("=== vllm-ascend: reset to upstream/main and apply patch ===")
-        _run_checked(["git", "fetch", "upstream", "--force"], ascend_path, "fetch upstream")
-        # checkout only tracked files, leaves compiled .so intact
-        _run_checked(["git", "checkout", "upstream/main", "--", "."], ascend_path, "checkout upstream/main")
-        if patch_path:
-            if not patch_path.exists():
-                print(f"Error: patch not found: {patch_path}", file=sys.stderr)
-                sys.exit(1)
-            _run_checked(["git", "apply", str(patch_path)], ascend_path, f"git apply {patch_path.name}")
+        print("=== vllm-ascend: branch kept, no reset needed ===")
     else:
         print("=== Setup vllm-ascend ===")
         _ensure_repo(ascend_path, ascend_remote)
@@ -503,8 +500,6 @@ def _run_one_test(cmd: list[str], log_path: Path, summary_path: Path,
                   ascend_path: Path, step_id: int, round_number: int,
                   env: dict[str, str], *, is_remote: bool, is_mock: bool) -> dict:
     """Execute one test and return its result dict."""
-    if not is_remote:
-        env["ASCEND_RT_VISIBLE_DEVICES"] = devices
     cwd = Path("/tmp") if is_remote else ascend_path
     exit_code = _run_to_log(cmd, cwd, log_path, env)
     cards = _test_cards(test)
@@ -647,6 +642,7 @@ def run_tests(
     # ---- step 7: schedule ----
     ci_dir = log_dir / str(step_id) / "tests"
     result_path = ci_dir / f"round-{round_number}-result.json"
+    sequential = sequential or not remote_host
     rounds = [[t] for t in test_files] if sequential else _schedule_rounds(test_files, total_cards)
     device_rounds = _assign_devices(rounds, all_phy_ids)
 
@@ -671,12 +667,12 @@ def run_tests(
 
     for round_idx, rnd in enumerate(device_rounds, start=1):
         round_t0 = time.monotonic()
-        print(f"\n== Round {round_idx}/{len(device_rounds)}: {len(rnd)} test(s) ==", flush=True)
+        print(f"\n== Round {round_idx}/{len(rounds)}: {len(rnd)} test(s) ==", flush=True)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(rnd)) as executor:
             futs = {}
             for test, devices in rnd:
-                slug = test.replace("/", "__").replace(".py", "")
+                slug = test.replace("/", "__").replace(".py", "").replace("::", "--")
                 lp = ci_dir / f"round-{round_number}-{slug}.log"
                 sp = ci_dir / f"round-{round_number}-{slug}-summary.json"
                 cmd = _build_test_cmd(test, devices, ascend_path=ascend_path,
